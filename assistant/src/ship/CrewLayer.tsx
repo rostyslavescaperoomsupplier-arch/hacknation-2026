@@ -122,8 +122,8 @@ function People({ lang, list }: { lang: Lang; list: CrewPerson[] }) {
   if (!list.length) return <p className="text-xs text-ink-2">{L(lang, 'Nikt nie jest odbity w środku.', 'Nobody is checked in.')}</p>;
   return (
     <ul className="flex flex-col divide-y divide-line text-sm">
-      {list.map((p) => (
-        <li key={p.id} className="flex items-baseline justify-between gap-2 py-1">
+      {list.map((p, i) => (
+        <li key={`${p.name}|${p.room_code}|${i}`} className="flex items-baseline justify-between gap-2 py-1">
           <span className="min-w-0"><span className="font-semibold text-ink">{p.name}</span> <span className="text-xs text-ink-2">{p.rank}</span></span>
           {p.since && <span className="shrink-0 text-xs tabular-nums text-ink-2">{L(lang, 'od', 'since')} {hhmm(p.since)}</span>}
         </li>

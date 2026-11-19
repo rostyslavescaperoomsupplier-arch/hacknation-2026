@@ -1,11 +1,14 @@
 // Assistant server (Node http, run with `node --experimental-strip-types server/index.ts`).
-//   GET  /api/health       -> { ok, model, knowledge: { files, chars }, uptime }
+//   GET  /api/health       -> { ok, model, configured, knowledge: { files, chars }, uptime }
 //   POST /api/chat         { lang, messages: Turn[] } -> { text: string[], sources, fallback, actions }
 //   POST /api/chat/stream  same body -> Server-Sent Events: `delta` { text } (markers removed), then `done` (same shape as
 //                          /api/chat, authoritative) or `error` { error: "assistant unavailable" | "rate limited" | "bad request" }
 //   GET  /api/crew/{summary|rooms|rooms/:id|crew?q=|terminals|activity|alerts}
 //                          read-only proxy to the crew database (CREW_API), rooms/terminals + `place`; 503 when it is down (crew.ts)
-// Errors: 400 bad input, 403 bad origin / missing x-assistant-token, 429 rate limited (retry-after), 502 upstream failure.
+// Errors: 400 bad input, 403 bad origin / missing x-assistant-token, 429 rate limited (retry-after), 502 upstream failure,
+//         503 { error: "assistant not configured" } when no Anthropic credentials are set (stream: SSE `error` event).
+// Listens on HOST (default 127.0.0.1: nginx is the only way in) and PORT. requestTimeout 15 s / headersTimeout 10 s
+// only bound how long receiving a request may take; SSE responses are not cut by them.
 // Guard rules (rate limits, origin, ASSISTANT_TOKEN) live in guard.ts; the Claude call and ship documents in claude.ts.
 // The API key stays here (ANTHROPIC_API_KEY or an `ant auth login` profile); the browser never sees it.
 // ASSISTANT_FAKE=1 runs with a deterministic fake Claude (no key, no network) for tests and demos.
@@ -15,15 +18,18 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clientIp, corsOrigin, originAllowed, takeToken, tokenOk, validateChat, type ChatInput } from './guard.ts';
-import { FAKE, MODEL, ask, askStream, describeError, knowledgeStats } from './claude.ts';
+import { CONFIGURED, FAKE, MODEL, ask, askStream, describeError, knowledgeStats } from './claude.ts';
 import { CREW_API, crewEnabled, handleCrewProxy } from './crew.ts';
 import { attachCrewVideoWebSocket } from './crew-video.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
+const HOST = process.env.HOST || '127.0.0.1';
 const DIST = path.join(here, '..', 'dist');
 const STARTED = Date.now();
 const HEARTBEAT_MS = 15_000;
+
+const NOT_CONFIGURED = 'assistant not configured';
 
 class BodyError extends Error {}
 
@@ -54,6 +60,14 @@ const log = (route: string, status: number, t0: number, note = '') =>
 /** Origin, token, rate limit, body. Sends the error response itself and returns null when the request is refused. */
 async function admit(req: IncomingMessage, res: ServerResponse, route: string, t0: number): Promise<ChatInput | null> {
   if (!originAllowed(req) || !tokenOk(req)) { send(res, 403, { error: 'forbidden' }); log(route, 403, t0); return null; }
+  if (!CONFIGURED) { // no API key on the server: answer at once, no SDK call, no rate-limit token
+    if (route === 'stream') {
+      res.writeHead(503, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'close' });
+      res.end(`event: error\ndata: ${JSON.stringify({ error: NOT_CONFIGURED })}\n\n`);
+    } else send(res, 503, { error: NOT_CONFIGURED }, { connection: 'close' });
+    log(route, 503, t0, 'not configured');
+    return null;
+  }
   const rate = takeToken(clientIp(req));
   if (!rate.ok) {
     send(res, 429, { error: 'rate limited' }, { 'retry-after': String(rate.retryAfter) });
@@ -121,21 +135,26 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   let pathname: string;
   try { pathname = decodeURIComponent(new URL(req.url || '/', 'http://x').pathname); } catch { res.writeHead(400).end(); return; }
   let file = path.normalize(path.join(DIST, pathname));
-  if (!file.startsWith(DIST)) { res.writeHead(403).end(); return; }
+  if (file !== DIST && !file.startsWith(DIST + path.sep)) { res.writeHead(403).end(); return; }
   if (!existsSync(file) || statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
   if (!existsSync(file)) { res.writeHead(404).end('Run `npm run build` first, or use `npm run dev`.'); return; }
   res.writeHead(200, { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream' });
   res.end(readFileSync(file));
 }
 
-const server = createServer(async (req, res) => {
+// Time allowed to RECEIVE a request (headers / whole request incl. body); env overrides are for tests only.
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS) || 15_000;
+const HEADERS_TIMEOUT_MS = Math.min(Number(process.env.HEADERS_TIMEOUT_MS) || 10_000, REQUEST_TIMEOUT_MS);
+
+// connectionsCheckingInterval: how often Node enforces the two timeouts (default 30 s would make 15 s up to 45 s)
+const server = createServer({ connectionsCheckingInterval: 2_000 }, async (req, res) => {
   const t0 = Date.now();
   try {
     const url = (req.url || '/').split('?')[0];
     if (url === '/api/health') {
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'GET only' });
       return send(res, 200, {
-        ok: true, model: MODEL, knowledge: knowledgeStats, uptime: Math.round((Date.now() - STARTED) / 1000),
+        ok: true, model: MODEL, configured: CONFIGURED, knowledge: knowledgeStats, uptime: Math.round((Date.now() - STARTED) / 1000),
         ...(FAKE ? { fake: true } : {}),
       });
     }
@@ -164,4 +183,7 @@ const server = createServer(async (req, res) => {
 });
 // crew video chat between terminals (signalling WebSocket at /crew-video-ws, from branch videochat)
 attachCrewVideoWebSocket(server);
-server.listen(PORT, () => console.log(`[assistant] http://localhost:${PORT}  model=${MODEL}${FAKE ? '  FAKE client' : ''}  crew=${crewEnabled ? CREW_API : 'off'}`));
+// Only bound the time to RECEIVE a request (slow / unfinished bodies); a long SSE response is not affected.
+server.requestTimeout = REQUEST_TIMEOUT_MS;
+server.headersTimeout = HEADERS_TIMEOUT_MS;
+server.listen(PORT, HOST, () => console.log(`[assistant] http://${HOST.includes(':') ? `[${HOST}]` : HOST}:${PORT}  model=${MODEL}${FAKE ? '  FAKE client' : ''}${CONFIGURED ? '' : '  NOT CONFIGURED (no API key)'}  crew=${crewEnabled ? CREW_API : 'off'}`));

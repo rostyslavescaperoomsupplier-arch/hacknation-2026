@@ -2,11 +2,16 @@
 //  - client: GET <CREW_API>/api/... with a 2 s timeout and a 3 s in-memory cache per path (in-flight requests shared).
 //    CREW_API defaults to http://127.0.0.1:8790; set CREW_API=off (or empty) to switch the crew features off.
 //  - handleCrewProxy: read-only proxy for the browser, GET /api/crew/{summary|rooms|rooms/:id|crew?q=|terminals|activity|alerts}.
-//    Same JSON as the crew server; rooms and terminals get `place: { zone, at } | null` from shared/crew-map.ts;
-//    crew rows (crew?q= and rooms/:id .crew) lose birth_date, nationality, badge and the RFID uid/type.
+//    Same JSON as the crew server, except: rooms and terminals get `place: { zone, at } | null` from shared/crew-map.ts;
+//    people (crew and rooms/:id .crew) are reduced to { name, rank, department, room: { code, name, zone } | null, since }
+//    (no cabin, phone extension, badge, RFID, birth date, nationality, shift, ids); alerts lose `badge` and `id` of every
+//    person; crew?q= must be at least 2 characters without % or _ (400 otherwise; no q = the whole list for the map).
 //    Same origin / x-assistant-token check as the chat, own rate limit (120 / min / IP), 503 when the database is down.
-//  - CREW_TOOLS + runCrewTool: read-only Claude tools for the chat; results are compact JSON, no birth date / nationality
-//    unless the tool input says `details: true`.
+//    TODO(team, finding #2): there is still no real terminal authentication. The origin check and the bundled token stop
+//    nobody with curl, so who-is-where (names + room + since) stays public. Put /api/crew/ (and the crew chat tools)
+//    behind per-terminal credentials kept outside the bundle, or an nginx allow-list of the ship network.
+//  - CREW_TOOLS + runCrewTool: read-only Claude tools for the chat; results are compact JSON, never birth date or
+//    nationality (no flag for them: a role claimed in the chat cannot be verified).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { BetaToolUnion } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { CREW_ROOM_PLACES, terminalAt, type CrewZone } from '../shared/crew-map.ts';
@@ -64,14 +69,36 @@ const terminalPlace = (roomCode: string, code: string): Place | null => {
 const zoneOf = (code: string | null | undefined): CrewZone | null => (code && CREW_ROOM_PLACES[code]?.zone) || null;
 
 // ---------- proxy ----------
-/** Fields the browser never gets from the proxy (the map UI does not show them): crew lists drop them. */
-const PRIVATE_FIELDS = ['birth_date', 'nationality', 'badge', 'rfid_uid', 'rfid_type']; // RFID UID would let anyone clone a card
-const publicPerson = (c: any) => {
-  if (!c || typeof c !== 'object') return c;
-  const out = { ...c };
-  for (const k of PRIVATE_FIELDS) delete out[k];
-  return out;
+/** The only person fields the browser gets: what the map shows (name, rank, since) plus department and room.
+ *  `fallbackRoom` is the room of a rooms/:id answer, for rows that do not carry their own room_code. */
+const publicPerson = (c: any, fallbackRoom?: { code?: unknown; name?: unknown }) => {
+  if (!c || typeof c !== 'object') return null;
+  const code = c.room_code ?? fallbackRoom?.code ?? null;
+  const name = c.room_name ?? (fallbackRoom && code === fallbackRoom.code ? fallbackRoom.name : null) ?? null;
+  return {
+    name: c.name ?? [c.first_name, c.last_name].filter(Boolean).join(' '),
+    rank: c.rank ?? null,
+    department: c.department ?? null,
+    room: code != null ? { code: String(code), name: name != null ? String(name) : null, zone: zoneOf(String(code)) } : null,
+    since: c.since ?? null,
+  };
 };
+
+/** Person objects inside /api/alerts (staffing[].crew[], lone[].crew, lastCheckin[]) lose these keys. */
+const ALERT_PERSON_DROP = ['id', 'badge', 'rfid_uid', 'rfid_type', 'birth_date', 'nationality', 'phone_ext', 'cabin', 'embarked_at', 'shift'];
+/** Deep copy of an alerts answer: `badge` (the check-in credential) removed everywhere, and person-like objects
+ *  (those with a `rank`) also lose their ids and private fields. */
+function publicAlerts(v: any): any {
+  if (Array.isArray(v)) return v.map(publicAlerts);
+  if (!v || typeof v !== 'object') return v;
+  const person = 'rank' in v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (k === 'badge' || (person && ALERT_PERSON_DROP.includes(k))) continue;
+    out[k] = publicAlerts(x);
+  }
+  return out;
+}
 
 function send(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}) {
   if (res.headersSent) { res.end(); return; }
@@ -109,22 +136,26 @@ export async function handleCrewProxy(req: IncomingMessage, res: ServerResponse)
   let upstream: string;
   let shape: (data: any) => unknown = (d) => d;
   let m: RegExpExecArray | null;
-  if (sub === 'summary' || sub === 'activity' || sub === 'alerts') upstream = '/api/' + sub;
+  if (sub === 'summary' || sub === 'activity') upstream = '/api/' + sub;
+  else if (sub === 'alerts') { upstream = '/api/alerts'; shape = publicAlerts; }
   else if (sub === 'rooms') {
     upstream = '/api/rooms';
     shape = (rows: any[]) => Array.isArray(rows) ? rows.map((r) => ({ ...r, place: roomPlace(r.code) })) : rows;
   } else if ((m = /^rooms\/(\d{1,9})$/.exec(sub))) {
     upstream = '/api/rooms/' + m[1];
     shape = (r: any) => (r && typeof r === 'object'
-      ? { ...r, ...(Array.isArray(r.crew) ? { crew: r.crew.map(publicPerson) } : {}), place: roomPlace(r.code) }
+      ? { ...r, ...(Array.isArray(r.crew) ? { crew: r.crew.map((c: any) => publicPerson(c, r)) } : {}), place: roomPlace(r.code) }
       : r);
   } else if (sub === 'terminals') {
     upstream = '/api/terminals';
     shape = (rows: any[]) => Array.isArray(rows) ? rows.map((t) => ({ ...t, place: terminalPlace(t.room_code, t.code) })) : rows;
   } else if (sub === 'crew') {
-    const q = (u.searchParams.get('q') ?? '').slice(0, 64);
+    // no q: the whole (reduced) list the map polls; a given q must be a real search, not a wildcard dump
+    const given = u.searchParams.get('q');
+    const q = (given ?? '').trim().slice(0, 64);
+    if (given !== null && (q.length < 2 || /[%_]/.test(q))) { send(res, 400, { error: 'bad query' }); log(400); return true; }
     upstream = '/api/crew' + (q ? '?q=' + encodeURIComponent(q) : '');
-    shape = (rows: any[]) => Array.isArray(rows) ? rows.map(publicPerson) : rows;
+    shape = (rows: any[]) => Array.isArray(rows) ? rows.map((c) => publicPerson(c)) : rows;
   } else { send(res, 404, { error: 'not found' }); log(404); return true; }
 
   if (!crewEnabled) { send(res, 503, { error: 'crew database unavailable' }); log(503); return true; }
@@ -152,13 +183,12 @@ export const CREW_TOOLS: BetaToolUnion[] = [
     name: 'find_crew',
     description: 'Find crew members by name, surname, rank (e.g. "bosman", "kapitan", "II mechanik"), department or badge (e.g. "B-1006") '
       + 'and tell where each one is now (room from the last card check-in, zone on the ship model, since when), their cabin and phone '
-      + 'extension. Returns at most 8 matches. Set details to true only when an officer explicitly needs nationality or date of birth.',
+      + 'extension. Returns at most 8 matches. Never returns nationality or date of birth.',
     strict: true,
     input_schema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Name, surname, rank, department or badge; several words must all match.' },
-        details: { type: 'boolean', description: 'Also return nationality, date of birth and embarkation date. Default false.' },
       },
       required: ['query'],
       additionalProperties: false,
@@ -210,14 +240,7 @@ function str(o: Record<string, unknown>, k: string): string {
   if (v.length > 100) throw new BadInput(`"${k}" is too long`);
   return v.trim();
 }
-function bool(o: Record<string, unknown>, k: string): boolean {
-  const v = o[k];
-  if (v === undefined || v === null) return false;
-  if (typeof v !== 'boolean') throw new BadInput(`"${k}" must be a boolean`);
-  return v;
-}
-
-function person(c: any, details: boolean) {
+function person(c: any) {
   const out: Record<string, unknown> = {
     name: `${c.first_name} ${c.last_name}`, rank: c.rank, department: c.department, badge: c.badge, shift: c.shift,
     on_board: c.room_id != null,
@@ -225,20 +248,18 @@ function person(c: any, details: boolean) {
     since: c.since ?? null, minutes_ago: minutesAgo(c.since),
     cabin: c.cabin ?? null, phone_ext: c.phone_ext ?? null,
   };
-  if (details) Object.assign(out, { nationality: c.nationality ?? null, birth_date: c.birth_date ?? null, embarked_at: c.embarked_at ?? null });
   return out;
 }
 
 async function findCrew(o: Record<string, unknown>) {
   const query = str(o, 'query');
-  const details = bool(o, 'details');
   const words = fold(query).split(/\s+/).filter(Boolean);
   const all = await crewGet<any[]>('/api/crew');
   const hits = all.filter((c) => {
     const hay = fold([c.first_name, c.last_name, c.rank, c.badge, c.department, c.room_name].join(' '));
     return words.every((w) => hay.includes(w));
   });
-  return { query, matches: hits.length, crew: hits.slice(0, 8).map((c) => person(c, details)) };
+  return { query, matches: hits.length, crew: hits.slice(0, 8).map(person) };
 }
 
 async function roomPeople(o: Record<string, unknown>) {

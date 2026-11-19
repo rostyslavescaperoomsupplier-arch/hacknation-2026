@@ -399,3 +399,60 @@ describe('guard: rate limit and shared token', () => {
     assert.equal(s.status, 429);
   });
 });
+
+describe('no Anthropic credentials (ASSISTANT_FAKE off, no key)', () => {
+  let srv: Srv;
+  before(async () => { srv = await startServer({ ASSISTANT_FAKE: '0' }); });
+  after(async () => { await stop(srv); });
+
+  test('health says configured: false; chat 503 and stream SSE error "assistant not configured", at once', async () => {
+    const h = await (await fetch(srv.base + '/api/health')).json();
+    assert.equal(h.ok, true);
+    assert.equal(h.configured, false);
+    const t0 = Date.now();
+    const r = await post(srv, '/api/chat', ask());
+    assert.equal(r.status, 503);
+    assert.deepEqual(await r.json(), { error: 'assistant not configured' });
+    const s = await post(srv, '/api/chat/stream', ask());
+    assert.equal(s.status, 503);
+    assert.match(s.headers.get('content-type') ?? '', /text\/event-stream/);
+    const ev = await readSSE(s);
+    assert.deepEqual(ev.map((e) => [e.event, e.json]), [['error', { error: 'assistant not configured' }]]);
+    assert.ok(Date.now() - t0 < 1500, 'answered without calling the API');
+    assert.ok(!/upstream|APIConnectionError|AuthenticationError/.test(srv.log.join('')), 'no SDK call: ' + srv.log.join(''));
+    // a foreign origin is still refused first
+    assert.equal((await post(srv, '/api/chat', ask(), { origin: 'https://evil.example' })).status, 403);
+  });
+
+  test('a configured (fake) server reports configured: true', async () => {
+    const other = await startServer();
+    try { assert.equal((await (await fetch(other.base + '/api/health')).json()).configured, true); } finally { await stop(other); }
+  });
+});
+
+describe('request timeouts do not cut SSE responses', () => {
+  let srv: Srv;
+  before(async () => { srv = await startServer({ REQUEST_TIMEOUT_MS: '1500', HEADERS_TIMEOUT_MS: '1000' }); });
+  after(async () => { await stop(srv); });
+
+  test('a slow SSE answer longer than requestTimeout still ends with done', async () => {
+    const t0 = Date.now();
+    const ev = await readSSE(await post(srv, '/api/chat/stream', ask('FAKE_SLOW ' + 'długie pytanie o drogę ewakuacji '.repeat(3))));
+    assert.ok(Date.now() - t0 > 3000, `stream took only ${Date.now() - t0} ms, test proves nothing`);
+    assert.equal(ev[ev.length - 1].event, 'done');
+  });
+
+  test('an unfinished request body is cut after requestTimeout', async () => {
+    const { connect } = await import('node:net');
+    const closed = await new Promise<number>((resolve) => {
+      const t0 = Date.now();
+      const s = connect(Number(new URL(srv.base).port), '127.0.0.1');
+      const t = setTimeout(() => { s.destroy(); resolve(-1); }, 10_000);
+      s.on('error', () => {});
+      s.resume(); // consume the 408 so 'close' can fire
+      s.on('close', () => { clearTimeout(t); resolve(Date.now() - t0); });
+      s.write('POST /api/chat HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 50\r\n\r\n{');
+    });
+    assert.ok(closed > 0 && closed < 6000, `closed after ${closed} ms`);
+  });
+});

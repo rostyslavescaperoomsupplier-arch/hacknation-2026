@@ -7,6 +7,7 @@ Type=simple
 WorkingDirectory=/var/www/jantar-assistant
 EnvironmentFile=/etc/jantar-assistant.env
 Environment=PORT=3003
+Environment=HOST=127.0.0.1
 ExecStart=/usr/bin/node --experimental-strip-types server/index.ts
 Restart=always
 RestartSec=3

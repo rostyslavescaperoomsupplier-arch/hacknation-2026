@@ -4,8 +4,10 @@
 //    from the `done` event. On a network error / non-SSE reply / `error` event it falls back ONCE to the JSON
 //    endpoint, then to the offline answer.
 //  - ask(history, lang): the plain JSON endpoint (kept for compatibility, also the fallback).
-// HTTP 429 gives a short "too many questions" answer (no contact buttons). If VITE_ASSISTANT_TOKEN is set it is
-// sent as `x-assistant-token` to both endpoints.
+// HTTP 429 gives a short "too many questions" answer (no contact buttons); HTTP 503 "assistant not configured" (no API
+// key on the server) gives a short "not configured yet" answer (no contact buttons, no fallback to the JSON endpoint).
+// If VITE_ASSISTANT_TOKEN is set it is sent as `x-assistant-token` to both endpoints. It is NOT a secret: Vite builds
+// it into the public bundle, so it only filters casual bots (see docs/ASSISTANT-API.md).
 import type { Answer, Lang, Turn } from './types';
 import { STR } from './i18n';
 
@@ -27,6 +29,8 @@ export type Reply = Answer & {
   aborted?: boolean;
   /** HTTP 429 */
   rateLimited?: boolean;
+  /** HTTP 503 "assistant not configured": the server has no API key */
+  notConfigured?: boolean;
 };
 
 export interface StreamOpts {
@@ -81,6 +85,21 @@ function rateLimited(lang: Lang, retryAfter: string | null): Reply {
     ? `Zbyt wiele pytań, spróbuj za chwilę${wait ? ` (ok. ${wait < 120 ? `${wait} s` : `${Math.ceil(wait / 60)} min`})` : ''}.`
     : `Too many questions, please try again in a moment${wait ? ` (about ${wait < 120 ? `${wait} s` : `${Math.ceil(wait / 60)} min`})` : ''}.`;
   return { text: [msg], sources: [], fallback: false, actions: [], remoteFailed: true, rateLimited: true };
+}
+
+const NOT_CONFIGURED = 'assistant not configured';
+
+function notConfigured(lang: Lang): Reply {
+  const msg = lang === 'pl'
+    ? 'Asystent nie jest jeszcze skonfigurowany na serwerze (brak klucza API). Pozostałe zakładki działają.'
+    : 'The assistant is not configured on the server yet (no API key). The other tabs work.';
+  return { text: [msg], sources: [], fallback: false, actions: [], remoteFailed: true, notConfigured: true };
+}
+
+/** a 503 whose body (JSON or one SSE `error` event) says "assistant not configured" */
+async function isNotConfigured(res: Response): Promise<boolean> {
+  if (res.status !== 503) return false;
+  try { return (await res.text()).includes(NOT_CONFIGURED); } catch { return false; }
 }
 
 function aborted(soFar: string): Reply {
@@ -161,6 +180,7 @@ export async function ask(history: Turn[], lang: Lang, signal?: AbortSignal): Pr
       method: 'POST', headers: headers(false), body: body(history, lang), signal: l.signal, credentials: 'omit',
     });
     if (res.status === 429) return rateLimited(lang, res.headers.get('retry-after'));
+    if (await isNotConfigured(res)) return notConfigured(lang);
     if (!res.ok) throw new Error(String(res.status));
     return normalize((await res.json()) as Answer, lang);
   } catch {
@@ -181,6 +201,7 @@ export async function askStream(history: Turn[], lang: Lang, opts: StreamOpts = 
       method: 'POST', headers: headers(true), body: body(history, lang), signal: l.signal, credentials: 'omit',
     });
     if (res.status === 429) return rateLimited(lang, res.headers.get('retry-after'));
+    if (await isNotConfigured(res)) return notConfigured(lang);
     const sse = (res.headers.get('content-type') || '').includes('text/event-stream');
     if (res.ok && sse && res.body) {
       for await (const ev of sseEvents(res.body, l.bump)) {
@@ -197,6 +218,7 @@ export async function askStream(history: Turn[], lang: Lang, opts: StreamOpts = 
         } else if (ev.event === 'error') {
           const d = parseJson(ev.data);
           if (d?.error === 'rate limited') return rateLimited(lang, null);
+          if (d?.error === NOT_CONFIGURED) return notConfigured(lang);
           break;
         }
       }

@@ -1,6 +1,8 @@
 // Live crew data for the "Załoga" layer of the ship view: terminals, rooms with headcounts, people and safety alerts
 // from the crew database (teammates' crew/ server) through the assistant's read-only proxy /api/crew/*.
 // The proxy adds `place: {zone, at}` to rooms and terminals; when it is missing we compute it from the shared map.
+// People come reduced from the proxy: { name, rank, department, room: { code, name, zone } | null, since } (no ids,
+// cabins, phone extensions or badges); alert persons carry name / rank / department only.
 import { useEffect, useMemo, useState } from 'react';
 import { CREW_ROOM_PLACES, terminalAt, type CrewZone } from '../../shared/crew-map';
 import { ZONE, type Text2, type Vec3, type ZoneId } from './routes';
@@ -17,7 +19,7 @@ export interface CrewRoom {
   id: number; code: string; name: string; capacity: number; people: number; occupancy: number;
   min_staff: number; hazardous: number; restricted: number; terminals: number; place: Place | null;
 }
-export interface CrewPerson { id: number; name: string; rank: string; department: string; room_code: string; since: string | null }
+export interface CrewPerson { name: string; rank: string; department: string; room_code: string; since: string | null }
 export interface CrewAlert { room: string; severity: Severity; text: Text2 }
 
 export interface ZoneCrew {
@@ -81,7 +83,7 @@ function roomPlace(code: string, given: unknown): Place | null {
 // ---- raw API shapes (only the fields we use) ----
 interface RawTerminal { code: string; room_code: string; room_name: string; place?: Place | null }
 interface RawRoom { id: number; code: string; name: string; capacity: number; people: number; occupancy: number; min_staff: number; hazardous: number; restricted: number; terminals: number; place?: Place | null }
-interface RawCrew { id: number; first_name: string; last_name: string; rank: string; department: string; room_code: string | null; since: string | null }
+interface RawCrew { name: string; rank: string; department: string | null; room: { code: string; name: string | null; zone: string | null } | null; since: string | null }
 interface RawPerson { name: string; rank: string }
 interface RawAlerts {
   staffing: { code: string; people: number; min_staff: number; status: string }[];
@@ -105,8 +107,8 @@ function build(t: RawTerminal[], r: RawRoom[], c: RawCrew[], a: RawAlerts): Omit
     id: x.id, code: x.code, name: x.name, capacity: x.capacity, people: x.people, occupancy: x.occupancy,
     min_staff: x.min_staff, hazardous: x.hazardous, restricted: x.restricted, terminals: x.terminals, place: roomPlace(x.code, x.place),
   }));
-  const people: CrewPerson[] = c.filter((x) => x.room_code).map((x) => ({
-    id: x.id, name: `${x.first_name} ${x.last_name}`, rank: x.rank, department: x.department, room_code: x.room_code as string, since: x.since,
+  const people: CrewPerson[] = c.filter((x) => x.room?.code).map((x) => ({
+    name: x.name, rank: x.rank, department: x.department ?? '', room_code: x.room!.code, since: x.since,
   }));
 
   const codeByName = new Map(rooms.map((x) => [x.name, x.code]));

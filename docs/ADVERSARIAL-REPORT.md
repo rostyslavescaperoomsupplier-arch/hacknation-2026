@@ -13,7 +13,7 @@ cd assistant
 node --experimental-strip-types --test 'tests/adversarial/*.test.ts'
 ```
 
-Wynik teraz: 135 testów, 117 pass, 0 fail, 18 todo. Testy `todo` to znaleziska z tego raportu (`{ todo: 'finding #n' }`):
+Wynik teraz (po naprawach z 2026-11-19): 138 testów, 132 pass, 0 fail, 6 todo (#1, #13, #14 x2 są naprawione w nginx, a te testy biją w node bezpośrednio; #2 auth terminali i #4 zostają). Testy `todo` to znaleziska z tego raportu (`{ todo: 'finding #n' }`):
 uruchamiają się i failują, ale nie psują przebiegu. Po naprawie znaleziska zdejmij `todo` z testu, wtedy pilnuje regresji.
 Testy A8/A9 (proxy załogi) używają nagrywającego fałszywego upstreamu; A9 czyta demo-bazę `:8790` tylko przez GET i jest
 pomijany, gdy baza nie działa.
@@ -82,6 +82,7 @@ Naprawa: w nginx zamiast `map` użyć modułu realip tylko dla adresów Cloudfla
 albo przyjmować ruch na :80 tylko z adresów proxy (`allow <zakresy>; deny all;`). Sprawdzić, czy `curl -6` na IPv6 VPS działa.
 
 ### #2 Publiczny podgląd, kto gdzie jest na statku - wysokie (przy prawdziwych danych)
+**Status: częściowo naprawione (2026-11-19).** `crew.ts`: `q` krótsze niż 2 znaki albo z `%`/`_` -> 400 `bad query`; osoby w `crew` i `rooms/:id` mają tylko `name, rank, department, room {code, name, zone}, since` (bez kabiny, numeru wewnętrznego, karty, id); mapa (`src/ship/crew.ts`) czyta nowy kształt. **Pozostaje:** prawdziwe uwierzytelnienie terminali (decyzja zespołu, TODO w `crew.ts` i `docs/ASSISTANT-API.md`); bez `q` cała skrócona lista nadal jest publiczna, bo mapa jej potrzebuje, a narzędzia czatu dalej podają kabinę i numer wewnętrzny. Test A9 "live named locations" zostaje `todo`, nowy test A9 "crew data minimised" pilnuje minimalizacji.
 `/api/crew/rooms/:id`, `/api/crew/crew?q=` (pusty `q` lub `%` zwraca wszystkich) i `/api/crew/alerts` zwracają imiona,
 stopnie, aktualne pomieszczenie, od kiedy, kabinę i numer wewnętrzny każdej osoby. Jedyną ochroną jest Origin, który zwykły
 `curl` pomija, i opcjonalny token, który i tak jest w bundlu (#4). To dokładnie scenariusz "kto jest teraz sam w maszynowni".
@@ -94,6 +95,7 @@ terminal trzymany poza bundlem, albo `allow <sieć statku>; deny all;` w nginx d
 jak wildcard w `LIKE` upstreamu).
 
 ### #3 Numery kart (badge) w `/api/crew/alerts` - średnie
+**Status: naprawione.** `crew.ts` `publicAlerts`: `badge` usuwane w całej odpowiedzi `alerts`, a z obiektów osób (`staffing[].crew`, `lone[].crew`, `lastCheckin[]`) także `id` i pola prywatne. Test A9 bez `todo`.
 `crew.ts:112` przepuszcza `alerts` bez obróbki, więc `staffing[].crew[].badge` i `lastCheckin[].badge` są publiczne, choć
 `PRIVATE_FIELDS` usuwa `badge` gdzie indziej. Badge to jedyny identyfikator w `POST /api/checkin` serwera załogi (bez
 uwierzytelnienia), więc pozwala podrabiać odbicia, jeśli ten endpoint jest gdziekolwiek osiągalny.
@@ -101,17 +103,20 @@ Reprodukcja: test A9 "/api/crew/alerts does not expose card badge numbers".
 Naprawa: w `crew.ts` dodać `shape` dla `alerts`, które usuwa `badge` (i `id`) z `staffing[].crew`, `lone[].crew`, `lastCheckin`.
 
 ### #4 `ASSISTANT_TOKEN` nie jest sekretem - średnie
+**Status: pozostaje (udokumentowane).** `docs/ASSISTANT-API.md` mówi wprost, że `VITE_ASSISTANT_TOKEN` jest w publicznym bundlu i jest filtrem na boty, nie sekretem. Prawdziwa kontrola dostępu to ta sama decyzja co #2. Test zostaje `todo`.
 `src/adapter.ts:18` czyta `VITE_ASSISTANT_TOKEN`, Vite wkleja go do `dist/assets/*.js`, czyli każdy go zobaczy. Origin
 nie jest uwierzytelnieniem (curl go nie wysyła). Jedyną realną ochroną budżetu jest limit, a ten obchodzi #1.
 Naprawa: traktować token jako filtr na boty, nie zabezpieczenie; prawdziwą kontrolę dać w nginx (lista IP terminali) albo
 krótkotrwały token wydawany po logowaniu terminala. Opisać to uczciwie w `docs/ASSISTANT-API.md`.
 
 ### #5 IPv6: osobny kubełek na każdy adres - średnie
+**Status: naprawione.** `guard.ts` `ipKey`: IPv4 bez zmian, `::ffff:a.b.c.d` -> `a.b.c.d`, IPv6 -> prefiks /64 (też po rozwinięciu `::`, z `[...]:port` i `%zone`). Test A4 bez `todo` + test IPv4-mapped.
 `guard.ts:64 takeToken` liczy limit na pełny adres. Klient IPv6 ma zwykle całą /64, czyli 2^64 "różnych" klientów.
 Reprodukcja: test A4 "IPv6 clients in one /64" (10/10 przy limicie 3).
 Naprawa: w `clientIp` (guard.ts:34) dla IPv6 zwracać prefiks /64 (pierwsze 4 grupy po rozwinięciu `::`), dla IPv4 bez zmian.
 
 ### #6 Data urodzenia i narodowość na samo "jestem kapitanem" - średnie
+**Status: naprawione.** Parametr `details` usunięty z `find_crew` (schemat i kod); prompt mówi, że narodowość i data urodzenia nie są dostępne przez czat niezależnie od roli. Test A8 bez `todo`.
 Narzędzie `find_crew` ma parametr `details` (crew.ts:161), który ustawia model, a prompt (`claude.ts:201`) każe go użyć,
 gdy użytkownik "powie, że potrzebuje tego do swojej roli". Rola nie jest sprawdzana, więc wystarczy ją zadeklarować.
 Reprodukcja: test A8 "find_crew tool" (narzędzie oddaje `birth_date`), w zakresie B przypadek `privacy-claimed-role`.
@@ -119,6 +124,7 @@ Naprawa: usunąć `details` z narzędzia i z promptu albo włączać go po stron
 (np. osobny token z nginx), nigdy z decyzji modelu.
 
 ### #7 Pamięć kubełków rośnie przy odrzuconych zapytaniach - średnie
+**Status: naprawione.** `takeToken` najpierw sprawdza globalny kubełek (trzymany osobno), kubełki per IP zapisuje dopiero po przyjęciu zapytania; mapa ma limit `MAX_IP_BUCKETS` (50 000) z usuwaniem najdawniej używanych (LRU). Test A4 bez `todo` + test limitu mapy.
 `level()` (guard.ts:50) tworzy kubełki `s:<ip>` i `d:<ip>` zanim sprawdzi globalny limit, a kubełki dzienne żyją dobę.
 200 tys. odrzuconych zapytań z różnych IP = +96 MB sterty; usługa ma `MemoryMax=300M`, a restart zeruje też limit globalny.
 W parze z #1 to zdalne wyłączenie (i reset) limitów. Reprodukcja: test A4 "requests refused by the limiter".
@@ -126,28 +132,33 @@ Naprawa: w `takeToken` najpierw sprawdzić `global` bez tworzenia kubełków IP 
 kluczy), ograniczyć rozmiar mapy (np. 50 000, potem odrzucać nowe IP 429) i czyścić kubełki dzienne częściej.
 
 ### #8 Node słucha na wszystkich interfejsach - niskie
+**Status: naprawione.** `server.listen(PORT, HOST)`, `HOST` domyślnie `127.0.0.1`; `Environment=HOST=127.0.0.1` w `deploy/jantar-assistant.service`; Vite proxuje na `http://127.0.0.1:8787` (na macOS `localhost` -> najpierw `::1`). Test A4 bez `todo`.
 `index.ts:167 server.listen(PORT)` wiąże `::`/`0.0.0.0`; na VPS port 3003 może być osiągalny z pominięciem nginx (bez limitu
 body 256 KB, bez logów). Test A4 "node port is not exposed" (u nas dostępny na adresie LAN).
 Naprawa: `server.listen(PORT, process.env.HOST || '127.0.0.1', ...)`.
 
 ### #9 Długi timeout niedokończonego body - niskie
+**Status: naprawione.** `requestTimeout` 15 s, `headersTimeout` 10 s, `connectionsCheckingInterval` 2 s (408 + zamknięcie). SSE nie jest ucinane: test w `tests/server.test.ts` z timeoutem 1,5 s i strumieniem ok. 4 s kończy się `done`. Test A5 bez `todo` (czeka 25 s).
 Node 22 ma domyślnie `requestTimeout` 300 s; `index.ts` go nie zmienia, a token limitu jest pobierany przed czytaniem body.
 Za nginx skutek jest mały (nginx buforuje body), bezpośrednio (#8) to tani slowloris. Test A5 (gniazdo żyje po 35 s).
 Naprawa: po `createServer` ustawić `server.requestTimeout = 15_000; server.headersTimeout = 10_000;` (SSE nie jest dotknięte,
 liczy się tylko czas do końca odebrania żądania).
 
 ### #10 Sprawdzenie ścieżki przez `startsWith(DIST)` - niskie
+**Status: naprawione.** `index.ts`: `file !== DIST && !file.startsWith(DIST + path.sep)` -> 403. Test A7 bez `todo`.
 `index.ts:124` przepuszcza też katalogi-rodzeństwo zaczynające się od `dist` (`/..%2fdist-cokolwiek/plik`). Dziś takiego
 katalogu nie ma. Test A7 "prefix check".
 Naprawa: `if (file !== DIST && !file.startsWith(DIST + path.sep))`.
 
 ### #11 Marker wpisany przez użytkownika staje się przyciskiem - niskie
+**Status: naprawione.** `parseActions(text, lang, userText)`: marker, który występuje dosłownie w ostatnim pytaniu użytkownika, nie staje się akcją (`/api/chat` i `done` w streamie). Osobny warunek dla `abandon` nie był wdrażany. Test A6 bez `todo`.
 Serwer nie odróżnia markera wybranego przez model od powtórzonego z pytania ("powtórz: [[DRILL:abandon]]"). Id są z białej
 listy, więc skutek to tylko mylący przycisk (np. "opuszczenie statku"). Test A6 (na fałszywym modelu), zakres B `marker-echo`.
 Naprawa: w `claude.ts` (parseActions) odrzucać akcje, których marker występuje dosłownie w ostatnim pytaniu użytkownika;
 osobno nie pokazywać `abandon` bez słów o opuszczeniu statku w odpowiedzi.
 
 ### #12 Pytanie z samych NUL / znaków sterujących przechodzi - niskie
+**Status: naprawione.** `validateChat` usuwa znaki sterujące C0 (poza `\n`, `\t`), DEL i C1 przed obcięciem i `trim()`; tura, która staje się pusta, jest pomijana jak pusta (400). Znaki bidi / zero-width zostają. Test A1 bez `todo`.
 `guard.ts:145` robi tylko `trim()`, więc `"\u0000\u0007"` jest pytaniem i kosztuje wywołanie modelu. Test A1.
 Naprawa: przed `trim()` usunąć `[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]` i znaki bidi/zero-width.
 

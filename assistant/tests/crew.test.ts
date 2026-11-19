@@ -151,8 +151,15 @@ describe('crew link (fake crew server)', () => {
     await new Promise((r) => crew.server.close(r));
   });
 
-  test('GET /api/crew/summary, activity, alerts: same JSON as the crew server', async () => {
-    for (const [p, want] of [['summary', SUMMARY], ['activity', ACTIVITY], ['alerts', ALERTS]] as const) {
+  test('GET /api/crew/summary, activity: same JSON as the crew server; alerts without badge / person ids', async () => {
+    const pub = (c: any) => ({ name: `${c.first_name} ${c.last_name}`, rank: c.rank, department: c.department });
+    const alerts = {
+      ...ALERTS,
+      staffing: ALERTS.staffing.map((s) => ({ ...s, crew: s.crew.map(() => pub(CREW[1])) })),
+      lone: ALERTS.lone.map((l) => ({ ...l, crew: pub(CREW[2]) })),
+      lastCheckin: ALERTS.lastCheckin.map(({ id: _i, badge: _b, ...rest }) => rest),
+    };
+    for (const [p, want] of [['summary', SUMMARY], ['activity', ACTIVITY], ['alerts', alerts]] as const) {
       const r = await get(srv, '/api/crew/' + p);
       assert.equal(r.status, 200, p);
       assert.match(r.headers.get('content-type') ?? '', /application\/json/);
@@ -177,9 +184,10 @@ describe('crew link (fake crew server)', () => {
     const r = await (await get(srv, '/api/crew/rooms/14')).json();
     assert.equal(r.code, 'D2-08');
     assert.equal(r.crew.length, 1);
-    assert.equal(r.crew[0].last_name, 'Melnyk');
-    assert.equal(r.crew[0].since, T);
-    for (const k of ['birth_date', 'nationality', 'badge']) assert.ok(!(k in r.crew[0]), `${k} stripped from room crew`);
+    assert.deepEqual(r.crew[0], {
+      name: 'Natalia Melnyk', rank: 'Bosman', department: 'Pokład',
+      room: { code: 'D2-08', name: 'Magazyn bosmański', zone: CREW_ROOM_PLACES['D2-08'].zone }, since: T,
+    }, 'room crew reduced to name, rank, department, room, since');
     assert.deepEqual(r.place, { zone: CREW_ROOM_PLACES['D2-08'].zone, at: CREW_ROOM_PLACES['D2-08'].at });
     assert.equal((await get(srv, '/api/crew/rooms/12345')).status, 404);
     assert.equal((await get(srv, '/api/crew/rooms/abc')).status, 404);
@@ -197,16 +205,30 @@ describe('crew link (fake crew server)', () => {
     assert.notDeepEqual(ts[0].place.at, ts[1].place.at, 'second reader in a room is offset');
   });
 
-  test('GET /api/crew/crew?q= passes the query through', async () => {
+  test('GET /api/crew/crew?q= passes the query through, people reduced to the map fields', async () => {
     const all = await (await get(srv, '/api/crew/crew')).json();
-    assert.equal(all.length, CREW.length);
+    assert.equal(all.length, CREW.length, 'no q: the whole list the map polls');
     const some = await (await get(srv, '/api/crew/crew?q=bosman')).json();
     assert.equal(some.length, 1);
-    assert.equal(some[0].last_name, 'Melnyk');
-    assert.equal(some[0].since, T, 'since kept');
-    assert.equal(some[0].room_name, 'Magazyn bosmański');
-    for (const c of all) for (const k of ['birth_date', 'nationality', 'badge']) assert.ok(!(k in c), `${k} stripped from crew list`);
+    assert.deepEqual(some[0], {
+      name: 'Natalia Melnyk', rank: 'Bosman', department: 'Pokład',
+      room: { code: 'D2-08', name: 'Magazyn bosmański', zone: CREW_ROOM_PLACES['D2-08'].zone }, since: T,
+    });
+    const ashore = all.find((c: any) => c.name === 'Ola Nowak');
+    assert.equal(ashore.room, null);
+    for (const c of all) assert.deepEqual(Object.keys(c).sort(), ['department', 'name', 'rank', 'room', 'since'], 'only public fields');
     assert.ok(crew.hits.includes('GET /api/crew?q=bosman'));
+  });
+
+  test('GET /api/crew/crew: q shorter than 2 characters or with % / _ -> 400, never reaches the database', async () => {
+    const before = crew.hits.length;
+    for (const q of ['', ' ', 'a', ' b ', '%', '_', 'a%', 'an_a', '%%', '__']) {
+      const r = await get(srv, '/api/crew/crew?q=' + encodeURIComponent(q));
+      assert.equal(r.status, 400, `q=${JSON.stringify(q)}`);
+      assert.deepEqual(await r.json(), { error: 'bad query' });
+    }
+    assert.equal(crew.hits.length, before, 'refused queries never hit the crew server');
+    assert.equal((await get(srv, '/api/crew/crew?q=an')).status, 200);
   });
 
   test('responses are cached ~3 s per path', async () => {
@@ -315,7 +337,7 @@ describe('crew link: database down', () => {
   after(async () => { await stop(srv); });
 
   test('proxy answers 503 {error:"crew database unavailable"}', async () => {
-    for (const p of ['summary', 'rooms', 'rooms/1', 'crew?q=x', 'terminals', 'activity', 'alerts']) {
+    for (const p of ['summary', 'rooms', 'rooms/1', 'crew?q=xy', 'terminals', 'activity', 'alerts']) {
       const r = await get(srv, '/api/crew/' + p);
       assert.equal(r.status, 503, p);
       assert.deepEqual(await r.json(), { error: 'crew database unavailable' });
@@ -360,7 +382,7 @@ describe('runCrewTool', () => {
   });
   after(async () => { await new Promise((r) => crew.server.close(r)); });
 
-  test('find_crew: where/since/cabin/phone, no birth date or nationality unless details', async () => {
+  test('find_crew: where/since/cabin/phone, never birth date or nationality (no details flag)', async () => {
     const r = await mod.runCrewTool('find_crew', { query: 'bosman' });
     assert.equal(r.isError, false);
     const j = JSON.parse(r.content);
@@ -373,9 +395,10 @@ describe('runCrewTool', () => {
     assert.ok(c.cabin);
     assert.ok(!('birth_date' in c) && !('nationality' in c), 'no private fields by default');
     assert.doesNotMatch(r.content, /2000-12-24|Ukraina/);
-    const d = JSON.parse((await mod.runCrewTool('find_crew', { query: 'bosman', details: true })).content).crew[0];
-    assert.equal(d.birth_date, '2000-12-24');
-    assert.equal(d.nationality, 'Ukraina');
+    const d = await mod.runCrewTool('find_crew', { query: 'bosman', details: true }); // the old flag: ignored
+    assert.doesNotMatch(d.content, /birth_date|nationality|2000-12-24|Ukraina/);
+    const tool = mod.CREW_TOOLS.find((t: any) => t.name === 'find_crew') as any;
+    assert.deepEqual(Object.keys(tool.input_schema.properties), ['query'], 'no details parameter in the tool schema');
   });
 
   test('find_crew folds case and Polish diacritics, all words must match', async () => {
@@ -419,7 +442,7 @@ describe('runCrewTool', () => {
   });
 
   test('bad input and unknown tools come back as is_error results', async () => {
-    for (const [name, input] of [['find_crew', {}], ['find_crew', { query: 42 }], ['find_crew', { query: 'x', details: 'yes' }],
+    for (const [name, input] of [['find_crew', {}], ['find_crew', { query: 42 }],
       ['room_people', null], ['room_people', { room: '' }], ['drop_tables', {}]] as const) {
       const r = await mod.runCrewTool(name, input);
       assert.equal(r.isError, true, `${name} ${JSON.stringify(input)}`);

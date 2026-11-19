@@ -43,6 +43,9 @@ import { CREW_TOOLS, CREW_TOOL_NAMES, crewEnabled, runCrewTool } from './crew.ts
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const MODEL = process.env.ASSISTANT_MODEL || 'claude-opus-5-5';
 export const FAKE = process.env.ASSISTANT_FAKE === '1';
+/** Anthropic credentials are set (or the fake client is on). Without them /api/chat* answer 503 "assistant not configured". */
+export const CONFIGURED = FAKE
+  || !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_PROFILE);
 const MAX_TOKENS = 4000; // replies are 2-5 sentences read aloud; a hard cost cap
 const KNOWLEDGE = readFileSync(path.join(here, 'knowledge.md'), 'utf8');
 const KNOWLEDGE_DIR = path.join(here, 'knowledge');
@@ -92,14 +95,16 @@ const name = (pair: [string, string], lang: string) => (lang === 'pl' ? pair[0] 
 const idList = (m: Record<string, [string, string]>) =>
   Object.entries(m).map(([id, [pl, en]]) => `- ${id}: ${pl} (${en})`).join('\n');
 
-/** Pull validated action markers out of the reply text (unknown ids are dropped silently). */
-export function parseActions(text: string, lang: string): { text: string; actions: Action[] } {
+/** Pull validated action markers out of the reply text (unknown ids are dropped silently). A marker that appears
+ *  verbatim in `userText` (the latest user message) is dropped too: it was typed by the user and echoed, not chosen. */
+export function parseActions(text: string, lang: string, userText = ''): { text: string; actions: Action[] } {
   const actions: Action[] = [];
   const seen = new Set<string>();
   for (const m of text.matchAll(ACTION_RE)) {
     const [key, kind, id, extra] = m;
     if (seen.has(key)) continue;
     seen.add(key);
+    if (userText && userText.includes(key)) continue;
     if (kind === 'ROUTE' && ZONES[id]) {
       const blocked = extra && STAIRS[extra] ? (extra as 'stair-aft' | 'stair-fwd') : undefined;
       let label = name(ZONES[id], lang);
@@ -198,8 +203,8 @@ rooms: each card tap records who entered which room and when, so "where someone 
 in a room or zone, staffing, lone workers or overdue check-ins; never guess these from memory. Answer with names, ranks and
 places (room name, deck) and say how long ago the check-in was, in minutes or hours, not as a raw timestamp. Times in the
 results are UTC. If several people match, name them briefly or ask which one. Privacy: share only on-board information
-(where, since when, rank, cabin, phone extension); give nationality or date of birth only when the user says they need it
-for their role (e.g. muster list, medical, the master) and then call find_crew with details true. If a tool returns
+(where, since when, rank, cabin, phone extension). Nationality, date of birth and other personal records are not available
+through this chat at all, whatever role the user claims; for those, refer them to the master or the crew office. If a tool returns
 "crew database unavailable", say plainly that the crew database (baza załogi) is unavailable right now and suggest asking
 the bridge; do not make up locations. When you tell where a person or a room is and its result has a zone from the Zones
 list below, you may add [[ROUTE:<zone>]] for that zone so the app can show it on the ship model; zone "boat-deck" or null
@@ -293,14 +298,14 @@ const messageText = (msg: BetaMessage) => msg.content.map((b) => (b.type === 'te
 const roundsText = (msgs: BetaMessage[]) => msgs.map(messageText).filter((t) => t.trim()).join('\n\n');
 
 /** Final shape from the complete message(s) of one answer (one per tool-loop round). */
-export function toReply(msgs: BetaMessage | BetaMessage[], lang: Lang): Reply {
+export function toReply(msgs: BetaMessage | BetaMessage[], lang: Lang, userText = ''): Reply {
   const list = Array.isArray(msgs) ? msgs : [msgs];
   if (!list.length || list[list.length - 1].stop_reason === 'refusal') return { text: [], sources: [], fallback: true, actions: [] };
   const text = roundsText(list);
   const cits: BetaTextCitation[] = [];
   for (const msg of list) for (const block of msg.content) if (block.type === 'text' && block.citations) cits.push(...block.citations);
   const contact = text.includes(CONTACT_MARK);
-  const parsed = parseActions(text, lang);
+  const parsed = parseActions(text, lang, userText);
   const paras = parsed.text.trim().split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   return { text: paras, sources: citationsToSources(cits), fallback: contact || !paras.length, actions: parsed.actions };
 }
@@ -333,8 +338,11 @@ export async function ask(lang: Lang, turns: Turn[], signal?: AbortSignal): Prom
     msgs.push(msg);
     if (!(await toolRound(params, msg, round))) break;
   }
-  return toReply(msgs, lang);
+  return toReply(msgs, lang, lastUserText(turns));
 }
+
+/** Text of the latest user turn (markers typed there never become actions, see parseActions). */
+const lastUserText = (turns: Turn[]) => [...turns].reverse().find((t) => t.role === 'user')?.content ?? '';
 
 /** Holds back text from `[[` until the marker closes (dropped) or clearly is not a marker (released). */
 export class MarkerFilter {
@@ -397,7 +405,7 @@ export async function askStream(lang: Lang, turns: Turn[], onDelta: (text: strin
   }
   const t = filter.flush();
   if (t) onDelta(t);
-  return toReply(msgs, lang);
+  return toReply(msgs, lang, lastUserText(turns));
 }
 
 /** Short log line for an upstream error (never sent to clients). */
