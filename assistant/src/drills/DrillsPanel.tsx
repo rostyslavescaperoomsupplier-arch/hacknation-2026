@@ -177,7 +177,7 @@ export default function DrillsPanel({ lang, drill, onShowRoute }: Props) {
       <header className="mb-3">
         <p className="tech-kicker">{L(lang, 'Szkolenie załogi', 'Crew training')}</p>
         <h2 id="drills-h" className="tech-title text-h2">{L(lang, 'Ćwiczenia alarmowe', 'Emergency drills')}</h2>
-        <p className="mt-1 border-l-4 border-gold pl-3 text-xs text-ink-2">{tx(lang, DISCLAIMER)}</p>
+        <p className="mt-1 text-xs text-ink-2">{tx(lang, DISCLAIMER)}</p>
       </header>
 
       {!d && (
@@ -185,9 +185,9 @@ export default function DrillsPanel({ lang, drill, onShowRoute }: Props) {
           {DRILLS.map((x) => (
             <li key={x.id}>
               <button id={`drill-card-${x.id}`} type="button" onClick={() => open(x.id)}
-                      className={`panel tap group flex h-full w-full flex-col gap-1.5 border-l-4 p-4 text-left hover:bg-paper-2 ${x.danger ? 'border-l-danger' : 'border-l-gold'}`}>
+                      className="panel tap group flex h-full w-full flex-col gap-1.5 p-4 text-left hover:bg-paper-2">
                 <span className="flex w-full items-start justify-between gap-2">
-                  <span className={`tech-title text-xl ${x.danger ? 'text-danger' : ''}`}>{tx(lang, x.title)}</span>
+                  <span className={`tech-title flex items-center gap-2 text-xl ${x.danger ? 'text-danger' : ''}`}><span aria-hidden="true" className={`inline-block size-2.5 shrink-0 rounded-[2px] ${x.danger ? 'bg-danger' : 'bg-gold'}`} />{tx(lang, x.title)}</span>
                   <Icon name="chevron-right" size={20} className="mt-0.5 shrink-0 text-ink-2" />
                 </span>
                 <span className="text-sm">{tx(lang, x.summary)}</span>
@@ -216,7 +216,7 @@ export default function DrillsPanel({ lang, drill, onShowRoute }: Props) {
           </div>
 
           {/* timer */}
-          <div className={`panel flex flex-wrap items-center gap-3 border-l-4 p-3 ${d.danger ? 'border-l-danger' : 'border-l-gold'}`}>
+          <div className="panel flex flex-wrap items-center gap-3 p-3">
             <div className="mr-auto">
               <p className="tech-kicker">{L(lang, 'Czas ćwiczenia', 'Drill time')}</p>
               <p className="font-display text-4xl font-bold tabular-nums leading-none" aria-label={L(lang, `Czas ćwiczenia ${mmss(elapsed)}`, `Drill time ${mmss(elapsed)}`)}>
