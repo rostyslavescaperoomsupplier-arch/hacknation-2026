@@ -8,3 +8,9 @@ dist/
 build/
 *.tsbuildinfo
 assistant/tests/adversarial/reports/
+
+# crew accounts (assistant/server/auth.ts): PIN hashes, one-off plaintext demo PINs, sessions. Never commit.
+assistant/server/data/accounts.json
+assistant/server/data/demo-pins.txt
+assistant/server/data/sessions.json
+assistant/server/data/*.tmp

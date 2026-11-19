@@ -1,11 +1,15 @@
 /** Alarm system client: one WebSocket per terminal to the assistant server (the "centrala", server/alarms.ts).
- *  Terminal identity: the SAME localStorage entry as the crew video chat (`crew-terminal`: name, crew DB terminal
- *  code, room code), so a terminal has one name everywhere; the alarm-only part (role, zone, generated id for
- *  terminals without a crew DB code) lives in `alarm-terminal`. An unconfigured browser still connects as a crew
+ *  Terminal identity (the DEVICE label): the SAME localStorage entry as the crew video chat (`crew-terminal`: name,
+ *  crew DB terminal code, room code), so a terminal has one name everywhere; the alarm-only part (zone, generated id
+ *  for terminals without a crew DB code) lives in `alarm-terminal`. An unconfigured browser still connects as a crew
  *  terminal with a generated name, so every screen on board shows an alarm.
+ *  ROLE comes from the crew login (src/auth, server/auth.ts), not from a setting: a logged-in bridge officer or the
+ *  master gets 'bridge', everybody else 'crew'. The socket reconnects when the logged-in person changes, because the
+ *  server reads the session cookie in the WebSocket handshake.
  *  Reconnects with backoff (1 s .. 15 s); the server sends a full state snapshot on every (re)connect. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CREW_ROOM_PLACES } from '../../shared/crew-map';
+import { canCommandAlarms, useAuthOptional, type User } from '../auth/AuthProvider';
 import {
   NAME_MAX, TERMINAL_ID_RE, isTerminalZone,
   type Alarm, type AlarmErrorCode, type AlarmKind, type AlarmState, type AlarmZone, type BlockedStair, type ClientMsg,
@@ -13,7 +17,7 @@ import {
 } from '../../shared/alarms';
 
 const LS_CREW = 'crew-terminal'; // shared with src/crew/CrewVideoChat.tsx: { name, terminal?, place? }
-const LS_ALARM = 'alarm-terminal'; // { id, role, zone }
+const LS_ALARM = 'alarm-terminal'; // { id, zone } (an old `role` entry is ignored: the role comes from the login)
 
 export interface TerminalIdentity {
   terminalId: string;
@@ -32,6 +36,10 @@ interface Ctx {
   identity: TerminalIdentity;
   /** true when the name was generated (terminal never configured) */
   defaultName: boolean;
+  /** logged-in crew member (src/auth), null when nobody is logged in on this terminal */
+  user: User | null;
+  /** role the server granted in `welcome` (null before it answered) */
+  serverRole: TerminalRole | null;
   state: AlarmState | null;
   active: Alarm | null;
   /** this terminal acknowledged the active alarm */
@@ -40,7 +48,8 @@ interface Ctx {
   lastError: { code: AlarmErrorCode; message: string; at: number } | null;
   /** server clock minus local clock (ms), for elapsed times */
   skew: number;
-  setIdentity(next: Pick<TerminalIdentity, 'name' | 'role' | 'zone'>): void;
+  /** device label + zone; the role is not settable (it comes from the login) */
+  setIdentity(next: Pick<TerminalIdentity, 'name' | 'zone'>): void;
   raise(a: RaiseInput): boolean;
   ack(extra?: { user?: string; headcount?: number }): boolean;
   end(): boolean;
@@ -66,7 +75,7 @@ function write(key: string, v: unknown) { try { localStorage.setItem(key, JSON.s
 
 function loadIdentity(): { id: TerminalIdentity; generated: boolean } {
   const crew = read<{ name: string; terminal: string; place: string }>(LS_CREW);
-  const own = read<{ id: string; role: TerminalRole; zone: TerminalZone | null }>(LS_ALARM) ?? {};
+  const own = read<{ id: string; zone: TerminalZone | null }>(LS_ALARM) ?? {};
   let ownId = typeof own.id === 'string' && TERMINAL_ID_RE.test(own.id) ? own.id : '';
   if (!ownId) { ownId = randomId(); write(LS_ALARM, { ...own, id: ownId }); }
   const terminal = typeof crew?.terminal === 'string' && TERMINAL_ID_RE.test(crew.terminal) ? crew.terminal : undefined;
@@ -77,7 +86,7 @@ function loadIdentity(): { id: TerminalIdentity; generated: boolean } {
     id: {
       terminalId: terminal ?? ownId,
       name: crewName.length >= 2 ? crewName : `Terminal ${ownId.slice(2, 6)}`,
-      role: own.role === 'bridge' ? 'bridge' : 'crew',
+      role: 'crew', // replaced from the login in AlarmProvider
       zone: isTerminalZone(own.zone) ? own.zone : placeZone,
       terminal, place,
     },
@@ -88,7 +97,13 @@ function loadIdentity(): { id: TerminalIdentity; generated: boolean } {
 const wsUrl = () => `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/alarms/ws`;
 
 export function AlarmProvider({ children, url }: { children: ReactNode; url?: string }) {
-  const [{ id: identity, generated }, setIdent] = useState(loadIdentity);
+  const [{ id: device, generated }, setIdent] = useState(loadIdentity);
+  const user = useAuthOptional()?.user ?? null;
+  const role: TerminalRole = canCommandAlarms(user) ? 'bridge' : 'crew';
+  // new object (-> reconnect with the new cookie) whenever the device or the logged-in person changes
+  const sessionKey = user ? `${user.id}:${user.expiresAt}` : '';
+  const identity = useMemo<TerminalIdentity>(() => ({ ...device, role }), [device, role, sessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [serverRole, setServerRole] = useState<TerminalRole | null>(null);
   const [conn, setConn] = useState<Conn>('connecting');
   const [state, setState] = useState<AlarmState | null>(null);
   const [log, setLog] = useState<Alarm[]>([]);
@@ -131,7 +146,7 @@ export function AlarmProvider({ children, url }: { children: ReactNode; url?: st
         if (m.type === 'welcome' || m.type === 'state') {
           setState(m.state);
           setSkew(Date.parse(m.state.now) - Date.now());
-          if (m.type === 'welcome') setConn('online');
+          if (m.type === 'welcome') { setConn('online'); setServerRole(m.role); }
           const id = m.state.active?.id ?? null;
           if (m.type === 'welcome' || id !== lastActiveId.current || (m.type === 'state' && m.reason === 'ended')) refreshLog();
           lastActiveId.current = id;
@@ -140,6 +155,7 @@ export function AlarmProvider({ children, url }: { children: ReactNode; url?: st
       };
       ws.onclose = () => {
         clearInterval(ping);
+        setServerRole(null);
         if (sock.current === ws) sock.current = null;
         if (!stopped) { setConn('offline'); schedule(); }
       };
@@ -181,21 +197,21 @@ export function AlarmProvider({ children, url }: { children: ReactNode; url?: st
   const acked = !!active && !!active.acks[identity.terminalId];
 
   const value = useMemo<Ctx>(() => ({
-    conn, identity, defaultName: generated, state, active, acked, log, lastError, skew,
+    conn, identity, defaultName: generated, user, serverRole, state, active, acked, log, lastError, skew,
     setIdentity(next) {
       const name = next.name.trim().slice(0, NAME_MAX);
       const crew = read<{ name: string; terminal: string; place: string }>(LS_CREW) ?? {};
       // the shared entry keeps its terminal / place; only the name changes
       write(LS_CREW, { ...crew, name });
       const own = read<{ id: string }>(LS_ALARM) ?? {};
-      write(LS_ALARM, { ...own, role: next.role, zone: next.zone });
+      write(LS_ALARM, { id: own.id, zone: next.zone });
       setIdent(loadIdentity());
     },
     raise: (a) => sendMsg({ type: 'raise', ...a }),
     ack: (extra) => (active ? sendMsg({ type: 'ack', alarmId: active.id, ...extra }) : false),
     end: () => (active ? sendMsg({ type: 'end', alarmId: active.id }) : false),
     refreshLog,
-  }), [conn, identity, generated, state, active, acked, log, lastError, skew, sendMsg, refreshLog]);
+  }), [conn, identity, generated, user, serverRole, state, active, acked, log, lastError, skew, sendMsg, refreshLog]);
 
   return <AlarmContext.Provider value={value}>{children}</AlarmContext.Provider>;
 }

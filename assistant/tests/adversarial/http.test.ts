@@ -10,7 +10,7 @@ import { networkInterfaces } from 'node:os';
 import { connect } from 'node:net';
 import path from 'node:path';
 import {
-  ROOT, startServer, stop, post, ask, alive, noStack, raw, sleep, freshIp, wsConnect, startUpstream,
+  ROOT, startServer, stop, post, ask, alive, noStack, raw, sleep, freshIp, wsConnect, startUpstream, login, cachedRosterDir,
   type Srv, type Upstream, type RawWs,
 } from './helpers.ts';
 import { readSSE } from '../sse.ts';
@@ -560,12 +560,31 @@ describe('A7. static files: traversal and data exposure', () => {
 // Crew proxy (/api/crew/*). Written against assistant/CONTRACT-CREW.md; skipped while the route does not exist yet.
 describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () => {
   let srv: Srv, up: Upstream, canary: Upstream, present = false;
+  // crew data needs a logged-in crew member (server/auth.ts): every request below carries the Kapitan's session cookie,
+  // so the attacks are tested against the authenticated proxy (the unauthenticated case is A8 "no session")
+  let cookie = '';
+  const H = (extra: Record<string, string> = {}) => ({ 'x-forwarded-for': freshIp(), cookie, ...extra });
   before(async () => {
     up = await startUpstream();
     canary = await startUpstream();
     srv = await startServer({ CREW_API: up.url });
-    const r = await fetch(srv.base + '/api/crew/summary', { headers: { 'x-forwarded-for': freshIp() } });
+    cookie = await login(srv);
+    assert.ok(cookie, 'login as the Kapitan of the fake upstream');
+    const r = await fetch(srv.base + '/api/crew/summary', { headers: H() });
     present = r.status !== 404;
+  });
+
+  test('no session: every data path is 401 and nothing reaches the upstream', async (t) => {
+    if (skip(t)) return;
+    const before = up.hits.length;
+    for (const p of ['/api/crew/summary', '/api/crew/crew', '/api/crew/crew?q=Anna', '/api/crew/rooms/1', '/api/crew/alerts', '/api/crew/terminals']) {
+      for (const c of ['', 'ju_session=' + 'A'.repeat(43), 'sid=1']) {
+        const r = await fetch(srv.base + p, { headers: { 'x-forwarded-for': freshIp(), ...(c ? { cookie: c } : {}) } });
+        assert.equal(r.status, 401, `${p} cookie=${c || '-'}`);
+        assert.doesNotMatch(await r.text(), /Anna|Nowak|Mostek/);
+      }
+    }
+    assert.equal(up.hits.length, before);
   });
   after(async () => { await stop(srv); await up.close(); await canary.close(); });
 
@@ -576,13 +595,13 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
     const paths = ['/api/crew/checkin', '/api/crew/../checkin', '/api/crew/%2e%2e/checkin', '/api/crew/rooms/..%2f..%2fcheckin',
       '/api/crew/summary', '/api/crew/rooms/D1-01'];
     for (const p of paths) for (const m of ['POST', 'PUT', 'DELETE', 'PATCH']) {
-      const r = await fetch(srv.base + p, { method: m, headers: { 'content-type': 'application/json', 'x-forwarded-for': freshIp() },
+      const r = await fetch(srv.base + p, { method: m, headers: H({ 'content-type': 'application/json' }),
         body: m === 'DELETE' ? undefined : JSON.stringify({ badge: 'B-1001', terminal: 'T-D1-01-A' }) });
       assert.ok(r.status >= 400 && r.status < 500 && r.status !== 418, `${m} ${p} -> ${r.status}`);
     }
     for (const g of ['/api/crew/checkin', '/api/crew/..%2fcheckin', '/api/crew/rooms/..%2f..%2fcheckin', '/api/crew/rooms/%2e%2e%2f%2e%2e%2fcheckin',
       '/api/crew/summary%2f..%2fcheckin', '/api/crew/summary/../checkin', '/api/crew/rooms/x%3f%2f..%2fcheckin', '/api/crew/rooms/%252e%252e%252fcheckin']) {
-      await fetch(srv.base + g, { headers: { 'x-forwarded-for': freshIp() } });
+      await fetch(srv.base + g, { headers: H() });
     }
     assert.deepEqual(up.hits.filter((h) => h.method !== 'GET'), [], 'non-GET reached upstream');
     assert.deepEqual(up.hits.filter((h) => /checkin/i.test(decodeURIComponent(decodeURIComponent(h.url)))).map((h) => h.url), [],
@@ -593,7 +612,7 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
     if (skip(t)) return;
     const before = up.hits.length;
     for (const p of ['/api/crew/secret', '/api/crew/admin', '/api/crew/../summary', '/api/crew/rooms/1/../../crew', '/api/crew/static/index.html']) {
-      await fetch(srv.base + p, { headers: { 'x-forwarded-for': freshIp() } });
+      await fetch(srv.base + p, { headers: H() });
     }
     const seen = up.hits.slice(before).map((h) => new URL(h.url, 'http://x').pathname);
     for (const s of seen) assert.match(s, /^\/api\/(summary|rooms|rooms\/[A-Za-z0-9-]+|crew|terminals|activity|alerts)$/, `unexpected upstream path ${s}`);
@@ -604,7 +623,7 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
     const c = new URL(canary.url).host;
     for (const p of [`/api/crew//${c}/api/summary`, `/api/crew/rooms/@${c}`, `/api/crew/rooms/http:%2f%2f${c}%2f`, `/api/crew/rooms/%2f%2f${c}`,
       `/api/crew/rooms/..%2f..%2f..%2f%2f${c}`, `/api/crew/summary?@${c}`, `/api/crew/rooms/x@${c}`]) {
-      await fetch(srv.base + p, { headers: { 'x-forwarded-for': freshIp() } });
+      await fetch(srv.base + p, { headers: H() });
     }
     assert.deepEqual(canary.hits.map((h) => h.url), [], 'request reached a host other than CREW_API');
   });
@@ -613,7 +632,7 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
     if (skip(t)) return;
     for (const q of ["' OR 1=1--", '%', '_', '%25', 'a&q=b', 'x#y', '../../checkin', 'a\u0000b', "'); DROP TABLE crew;--"]) {
       const before = up.hits.length;
-      const r = await fetch(srv.base + '/api/crew/crew?q=' + encodeURIComponent(q), { headers: { 'x-forwarded-for': freshIp() } });
+      const r = await fetch(srv.base + '/api/crew/crew?q=' + encodeURIComponent(q), { headers: H() });
       assert.ok(r.status === 200 || r.status === 400, `q=${q} -> ${r.status}`);
       const hit = up.hits.slice(before).find((h) => h.url.startsWith('/api/crew'));
       if (hit) {
@@ -626,8 +645,8 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
 
   test('cache is keyed by full query: ?q=A must not return the cached answer for ?q=B', async (t) => {
     if (skip(t)) return;
-    const a = await (await fetch(srv.base + '/api/crew/crew?q=Anna', { headers: { 'x-forwarded-for': freshIp() } })).json();
-    const b = await (await fetch(srv.base + '/api/crew/crew?q=Jan', { headers: { 'x-forwarded-for': freshIp() } })).json();
+    const a = await (await fetch(srv.base + '/api/crew/crew?q=Anna', { headers: H() })).json();
+    const b = await (await fetch(srv.base + '/api/crew/crew?q=Jan', { headers: H() })).json();
     const qa = JSON.stringify(a).match(/"echo_q":"([^"]*)"/)?.[1];
     const qb = JSON.stringify(b).match(/"echo_q":"([^"]*)"/)?.[1];
     if (qa !== undefined && qb !== undefined) assert.notEqual(qa, qb, 'cache ignores the query string');
@@ -636,7 +655,7 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
   test('client headers (cookie, authorization, x-assistant-token) are not forwarded upstream', async (t) => {
     if (skip(t)) return;
     const before = up.hits.length;
-    await fetch(srv.base + '/api/crew/terminals?fresh=' + Date.now(), { headers: { cookie: 'sid=1', authorization: 'Bearer x', 'x-assistant-token': 't', 'x-forwarded-for': freshIp() } });
+    await fetch(srv.base + '/api/crew/terminals?fresh=' + Date.now(), { headers: H({ cookie: cookie + '; sid=1', authorization: 'Bearer x', 'x-assistant-token': 't' }) });
     for (const h of up.hits.slice(before)) {
       assert.equal(h.headers.cookie, undefined);
       assert.equal(h.headers.authorization, undefined);
@@ -646,7 +665,7 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
 
   test('foreign Origin -> 403 on the crew proxy too', async (t) => {
     if (skip(t)) return;
-    const r = await fetch(srv.base + '/api/crew/summary', { headers: { origin: 'https://evil.example', 'x-forwarded-for': freshIp() } });
+    const r = await fetch(srv.base + '/api/crew/summary', { headers: H({ origin: 'https://evil.example' }) });
     assert.equal(r.status, 403);
   });
 
@@ -654,13 +673,13 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
     if (skip(t)) return;
     const ip = freshIp();
     const st: number[] = [];
-    for (let i = 0; i < 140; i++) st.push((await fetch(srv.base + '/api/crew/summary', { headers: { 'x-forwarded-for': ip } })).status);
+    for (let i = 0; i < 140; i++) st.push((await fetch(srv.base + '/api/crew/summary', { headers: H({ 'x-forwarded-for': ip }) })).status);
     assert.ok(st.includes(429), 'no 429 after 140 requests in a few seconds');
   });
 
   test('no PII beyond what the contract allows: birth_date / nationality / badge stripped from crew rows', async (t) => {
     if (skip(t)) return;
-    const body = await (await fetch(srv.base + '/api/crew/crew?q=Anna', { headers: { 'x-forwarded-for': freshIp() } })).text();
+    const body = await (await fetch(srv.base + '/api/crew/crew?q=Anna', { headers: H() })).text();
     assert.ok(!/birth_date|nationality|"badge"/.test(body), 'crew rows keep private fields');
   });
 
@@ -673,10 +692,12 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
 
   test('upstream down -> 503 {error}, no stack, fast', async (t) => {
     if (skip(t)) return;
-    const s2 = await startServer({ CREW_API: 'http://127.0.0.1:9' });
+    const s2 = await startServer({ CREW_API: 'http://127.0.0.1:9', AUTH_DIR: cachedRosterDir() });
     try {
+      const c2 = await login(s2);
+      assert.ok(c2, 'login from the cached roster');
       const t0 = Date.now();
-      const r = await fetch(s2.base + '/api/crew/summary', { headers: { 'x-forwarded-for': freshIp() } });
+      const r = await fetch(s2.base + '/api/crew/summary', { headers: H({ cookie: c2 }) });
       const body = await r.text();
       assert.equal(r.status, 503);
       assert.ok(noStack(body));
@@ -686,7 +707,7 @@ describe('A8. crew proxy (/api/crew/*) against a recording fake upstream', () =>
 });
 
 describe('A9. crew proxy against the real demo DB (GET only, read-only)', () => {
-  const get = (p: string, h: Record<string, string> = {}) => fetch(srv.base + p, { headers: { 'x-forwarded-for': freshIp(), ...h } });
+  const get = (p: string, h: Record<string, string> = {}) => fetch(srv.base + p, { headers: { 'x-forwarded-for': freshIp(), cookie, ...h } });
   const need = (t: { skip: (m: string) => void }) => {
     if (!present || !upstreamUp) { t.skip(!present ? 'crew proxy not implemented yet' : 'crew DB at :8790 not running'); return true; }
     return false;
@@ -717,30 +738,30 @@ describe('A9. crew proxy against the real demo DB (GET only, read-only)', () => 
     for (const c of JSON.parse(list)) assert.deepEqual(Object.keys(c).sort(), ['department', 'name', 'rank', 'room', 'since']);
   });
 
-  // stays TODO: the reduced who-is-where (name, rank, room, since) is still public; real terminal authentication is a
-  // product decision for the team (finding #2)
-  test('live named locations (who is where, since when) need more than "no Origin header"', { todo: 'finding #2 (terminal auth)' }, async (t) => {
+  // finding #2 fixed by the crew login (server/auth.ts): no session cookie -> 401
+  test('live named locations (who is where, since when) need more than "no Origin header"', async (t) => {
     if (need(t)) return;
-    // a plain curl from anywhere on the internet, no token, no Origin
-    const rooms = await (await get('/api/crew/rooms/1')).text();
-    const crew = await (await get('/api/crew/crew')).text();
+    // a plain curl from anywhere on the internet, no token, no Origin, no session
+    const rooms = await (await get('/api/crew/rooms/1', { cookie: '' })).text();
+    const crew = await (await get('/api/crew/crew', { cookie: '' })).text();
     const leaks = [/"name"\s*:\s*"[^"]+ [^"]+"[^}]*"rank"/.test(rooms) && 'rooms/:id lists people by name',
       /"since"/.test(crew) && 'crew lists who is where since when'].filter(Boolean);
     assert.deepEqual(leaks, []);
   });
 
-  let srv: Srv, present = false, upstreamUp = false;
+  let srv: Srv, present = false, upstreamUp = false, cookie = '';
   before(async () => {
     try { upstreamUp = (await fetch('http://127.0.0.1:8790/api/summary', { signal: AbortSignal.timeout(1500) })).ok; } catch { /* down */ }
     srv = await startServer({ CREW_API: 'http://127.0.0.1:8790' });
-    present = (await fetch(srv.base + '/api/crew/summary', { headers: { 'x-forwarded-for': freshIp() } })).status !== 404;
+    if (upstreamUp) cookie = await login(srv);
+    present = (await fetch(srv.base + '/api/crew/summary', { headers: { 'x-forwarded-for': freshIp(), cookie } })).status !== 404;
   });
   after(async () => { await stop(srv); });
 
   test('wildcard query (q=%, q=_) does not dump birth dates / nationality of all 45 crew', async (t) => {
     if (!present || !upstreamUp) return t.skip(!present ? 'crew proxy not implemented yet' : 'crew DB at :8790 not running');
     for (const q of ['%', '_', '']) {
-      const r = await fetch(srv.base + '/api/crew/crew?q=' + encodeURIComponent(q), { headers: { 'x-forwarded-for': freshIp() } });
+      const r = await get('/api/crew/crew?q=' + encodeURIComponent(q));
       const body = await r.text();
       assert.ok(!/"birth_date"|"nationality"/.test(body), `q=${JSON.stringify(q)} returns birth_date/nationality`);
     }

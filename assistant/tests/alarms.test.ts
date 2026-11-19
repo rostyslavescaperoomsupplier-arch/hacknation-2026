@@ -1,6 +1,8 @@
 // Ship alarm system (server/alarms.ts, docs/ALARMS.md). A tiny harness: node http server + attachAlarms + handleAlarmHttp
 // (+ the real crew-video WebSocket attached AFTER us, to prove both share the 'upgrade' event), a fake crew DB for the
 // muster accountability, and Node's built-in WebSocket client as the terminals.
+// Roles come from the crew login (server/auth.ts): bridge terminals connect with the session cookie of the Kapitan from
+// the fake crew DB (ACCOUNTS_DEMO_PIN), crew terminals connect without a session.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request, type Server } from 'node:http';
@@ -16,10 +18,19 @@ const ROOMS = [
   { code: 'D2-07', name: 'Szpital okrętowy', people: 2 },     // lounge -> muster B
   { code: 'X9-99', name: 'spoza mapy', people: 7 },           // not on our ship map: ignored
 ];
+// accounts for the login: the master (role captain -> bridge rights) and a motorman (role crew)
+const CREW = [
+  { id: 1, first_name: 'Bartosz', last_name: 'Kozłowski', rank: 'Kapitan', department: 'Pokład', rfid_uid: null },
+  { id: 2, first_name: 'Jan', last_name: 'Kowal', rank: 'Motorzysta', department: 'Maszynownia', rfid_uid: null },
+];
 const crew = createServer((req, res) => {
-  res.writeHead(req.url === '/api/rooms' ? 200 : 404, { 'content-type': 'application/json' });
-  res.end(req.url === '/api/rooms' ? JSON.stringify(ROOMS) : '{"error":"Not found"}');
+  const body = req.url === '/api/rooms' ? ROOMS : req.url === '/api/crew' ? CREW : null;
+  res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' });
+  res.end(body ? JSON.stringify(body) : '{"error":"Not found"}');
 });
+const DEMO_PIN = '2468';
+let captainCookie = '';
+let motormanCookie = '';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'alarms-test-'));
 const FILE = path.join(dir, 'data', 'alarms.json');
@@ -33,6 +44,8 @@ before(async () => {
   process.env.CREW_API = `http://127.0.0.1:${(crew.address() as { port: number }).port}`;
   process.env.ALARMS_FILE = FILE;
   process.env.ALARMS_SAVE_MS = '50';
+  process.env.AUTH_DIR = path.join(dir, 'auth');
+  process.env.ACCOUNTS_DEMO_PIN = DEMO_PIN;
   for (const k of ['ASSISTANT_TOKEN', 'ALLOWED_ORIGINS']) delete process.env[k];
   mod = await import('../server/alarms.ts');
   const { attachCrewVideoWebSocket } = await import('../server/crew-video.ts');
@@ -46,6 +59,14 @@ before(async () => {
   const { port } = server.address() as { port: number };
   base = `http://127.0.0.1:${port}`;
   wsBase = `ws://127.0.0.1:${port}`;
+  const login = async (id: number) => {
+    const r = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'pin', id, pin: DEMO_PIN }) });
+    assert.equal(r.status, 200, 'login ' + id);
+    return (r.headers.get('set-cookie') ?? '').split(';')[0];
+  };
+  captainCookie = await login(1);
+  motormanCookie = await login(2);
 });
 
 const open: WebSocket[] = [];
@@ -66,8 +87,9 @@ interface Term {
   next(pred: (m: ServerMsg) => boolean, ms?: number): Promise<ServerMsg>;
   send(o: unknown): void;
 }
-function connect(): Promise<Term> {
-  const ws = new WebSocket(`${wsBase}/api/alarms/ws`);
+function connect(cookie?: string): Promise<Term> {
+  // Node's WebSocket (undici) takes extra handshake headers: the session cookie, as a browser sends it
+  const ws = new (WebSocket as any)(`${wsBase}/api/alarms/ws`, cookie ? { headers: { cookie } } : undefined) as WebSocket;
   open.push(ws);
   const msgs: ServerMsg[] = [];
   const waiters: { pred: (m: ServerMsg) => boolean; resolve: (m: ServerMsg) => void }[] = [];
@@ -93,13 +115,15 @@ function connect(): Promise<Term> {
   return new Promise((resolve, reject) => { ws.onopen = () => resolve(t); ws.onerror = () => reject(new Error('ws error')); });
 }
 let idN = 0;
-async function terminal(role: 'bridge' | 'crew', zone: string | null = null, extra: Record<string, unknown> = {}) {
-  const t = await connect();
+/** 'bridge' = logged in as the Kapitan; 'crew' = no login. `cookie` overrides the session. */
+async function terminal(role: 'bridge' | 'crew', zone: string | null = null, extra: Record<string, unknown> = {}, cookie?: string) {
+  const t = await connect(cookie ?? (role === 'bridge' ? captainCookie : undefined));
   const terminalId = `T-TEST-${role}-${++idN}`;
   t.send({ type: 'hello', terminalId, name: `${role === 'bridge' ? 'Mostek' : 'Kabiny'} ${idN}`, role, zone, ...extra });
   const w = await t.next((m) => m.type === 'welcome');
   assert.equal(w.type, 'welcome');
-  return Object.assign(t, { terminalId });
+  if (w.type === 'welcome' && !cookie) assert.equal(w.role, role, 'effective role');
+  return Object.assign(t, { terminalId, role: w.type === 'welcome' ? w.role : null });
 }
 const isErr = (code: string) => (m: ServerMsg) => m.type === 'error' && m.code === code;
 const stateWith = (reason: string) => (m: ServerMsg) => m.type === 'state' && m.reason === reason;
@@ -112,6 +136,16 @@ test('crew role cannot raise or end; real alarm needs confirm', async () => {
   await c.next(isErr('forbidden'));
   c.send({ type: 'end', alarmId: '00000000-0000-4000-8000-000000000000' });
   await c.next(isErr('forbidden'));
+  // asking for 'bridge' in hello is not enough: without a login, or logged in with a crew rank, the terminal is 'crew'
+  const fake = await terminal('crew', 'bridge', { role: 'bridge' });
+  assert.equal(fake.role, 'crew');
+  fake.send(drill);
+  await fake.next(isErr('forbidden'));
+  const motor = await terminal('crew', 'engine-room', { role: 'bridge' }, motormanCookie);
+  assert.equal(motor.role, 'crew');
+  motor.send(drill);
+  await motor.next(isErr('forbidden'));
+  fake.ws.close(); motor.ws.close();
   const b = await terminal('bridge', 'bridge');
   b.send({ ...drill, drill: false });
   await b.next(isErr('confirm'));
@@ -132,7 +166,8 @@ test('bridge raises, two terminals receive it, crew acks with reaction time and 
     assert.equal(a.zone, 'cabins-aft');
     assert.equal(a.blocked, 'stair-aft');
     assert.equal(a.message, 'Pożar w kabinie 104');
-    assert.ok(a.raisedBy.startsWith('Mostek'));
+    assert.match(a.raisedBy, /^Bartosz Kozłowski, Kapitan \(Mostek \d+\)$/, 'raisedBy = logged-in person (terminal)');
+    assert.equal(a.acks[b.terminalId]?.user, 'Bartosz Kozłowski, Kapitan');
     assert.ok(a.acks[b.terminalId], 'raiser is acknowledged at once');
   }
   const alarm = (s1 as { state: AlarmState }).state.active!;

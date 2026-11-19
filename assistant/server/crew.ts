@@ -7,11 +7,12 @@
 //    (no cabin, phone extension, badge, RFID, birth date, nationality, shift, ids); alerts lose `badge` and `id` of every
 //    person; crew?q= must be at least 2 characters without % or _ (400 otherwise; no q = the whole list for the map).
 //    Same origin / x-assistant-token check as the chat, own rate limit (120 / min / IP), 503 when the database is down.
-//    TODO(team, finding #2): there is still no real terminal authentication. The origin check and the bundled token stop
-//    nobody with curl, so who-is-where (names + room + since) stays public. Put /api/crew/ (and the crew chat tools)
-//    behind per-terminal credentials kept outside the bundle, or an nginx allow-list of the ship network.
+//    Finding #2: data answers need a logged-in crew member (cookie ju_session, server/auth.ts) -> 401 { error:
+//    "login required" } otherwise. The check is registered by auth.ts (setCrewRequestCheck); until then it is CLOSED.
 //  - CREW_TOOLS + runCrewTool: read-only Claude tools for the chat; results are compact JSON, never birth date or
-//    nationality (no flag for them: a role claimed in the chat cannot be verified).
+//    nationality (no flag for them: a role claimed in the chat cannot be verified). They answer only when the chat
+//    request comes from a logged-in crew member (setCrewAccessCheck, registered by auth.ts; closed by default),
+//    otherwise the tool result is the error "login required" and the model tells the user to log in.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { BetaToolUnion } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { CREW_ROOM_PLACES, terminalAt, type CrewZone } from '../shared/crew-map.ts';
@@ -67,6 +68,18 @@ const terminalPlace = (roomCode: string, code: string): Place | null => {
   return p && at ? { zone: p.zone, at } : null;
 };
 const zoneOf = (code: string | null | undefined): CrewZone | null => (code && CREW_ROOM_PLACES[code]?.zone) || null;
+
+// ---------- access (finding #2): registered by server/auth.ts; closed until then ----------
+export type CrewRequestCheck = (req: IncomingMessage) => boolean;
+export type CrewAccessCheck = (tool: string) => boolean;
+let requestCheck: CrewRequestCheck = () => false;
+let accessCheck: CrewAccessCheck = () => false;
+/** Who may read /api/crew/* data (auth.ts: any logged-in crew member). */
+export function setCrewRequestCheck(fn: CrewRequestCheck) { requestCheck = fn; }
+/** Whether the crew chat tools may answer in the current request context (auth.ts: chat user is logged in). */
+export function setCrewAccessCheck(fn: CrewAccessCheck) { accessCheck = fn; }
+const LOGIN_REQUIRED = 'login required: crew data is only for a logged-in crew member. Tell the user to log in first '
+  + '(button "Zaloguj" at the top: crew card / wristband or name + PIN) and ask again; do not guess.';
 
 // ---------- proxy ----------
 /** The only person fields the browser gets: what the map shows (name, rank, since) plus department and room.
@@ -159,6 +172,9 @@ export async function handleCrewProxy(req: IncomingMessage, res: ServerResponse)
   } else { send(res, 404, { error: 'not found' }); log(404); return true; }
 
   if (!crewEnabled) { send(res, 503, { error: 'crew database unavailable' }); log(503); return true; }
+  let allowed = false;
+  try { allowed = requestCheck(req); } catch { /* closed */ }
+  if (!allowed) { send(res, 401, { error: 'login required' }); log(401); return true; }
   try {
     send(res, 200, shape(await crewGet(upstream)));
   } catch (e) {
@@ -322,6 +338,9 @@ async function listTerminals() {
 export async function runCrewTool(name: string, input: unknown): Promise<ToolOutput> {
   const ok = (v: unknown): ToolOutput => ({ content: JSON.stringify(v), isError: false });
   const err = (error: string): ToolOutput => ({ content: JSON.stringify({ error }), isError: true });
+  let allowed = false;
+  try { allowed = accessCheck(name); } catch { /* closed */ }
+  if (!allowed) return err(LOGIN_REQUIRED);
   try {
     switch (name) {
       case 'crew_summary': return ok(await crewSummary());

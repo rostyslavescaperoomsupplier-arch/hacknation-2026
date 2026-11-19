@@ -1,6 +1,7 @@
 /** "Alarmy" tab: bridge console (raise / end, acknowledgements with reaction times, muster accountability),
  *  crew status (current alarm, report a headcount), the alarm log with CSV export and the terminal settings.
- *  Role 'bridge' is chosen here on the terminal: a demo switch, not authentication (see docs/ALARMS.md). */
+ *  The bridge console needs a logged-in bridge officer or the master (src/auth, docs/ACCOUNTS.md); the role is checked
+ *  again by the server on every raise / end. Everybody else sees the status and can acknowledge. */
 import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import type { Lang } from '../types';
 import { MUSTER, ZONE, ZONES } from '../ship/routes';
@@ -9,6 +10,8 @@ import {
   type Alarm, type AlarmErrorCode, type AlarmKind, type AlarmZone, type BlockedStair, type TerminalRole, type TerminalZone,
 } from '../../shared/alarms';
 import { useAlarms, useElapsed } from './AlarmProvider';
+import { useAuthOptional } from '../auth/AuthProvider';
+import RoleBadge from '../auth/RoleBadge';
 import { L, clock, kindName, reaction, tx } from './kinds';
 import './alarm.css';
 
@@ -22,7 +25,7 @@ const dateTime = (lang: Lang, iso: string) => new Date(iso).toLocaleString(lang 
 
 const ERRORS: Record<AlarmErrorCode | 'offline', [string, string]> = {
   offline: ['Brak połączenia z centralą. Ponawiam…', 'No connection to the alarm server. Retrying…'],
-  forbidden: ['Ten terminal nie ma roli mostka.', 'This terminal does not have the bridge role.'],
+  forbidden: ['Alarmy ogłasza i kończy tylko zalogowany oficer mostka albo kapitan.', 'Only a logged-in bridge officer or the master can raise or end alarms.'],
   confirm: ['Prawdziwy alarm wymaga potwierdzenia.', 'A real alarm needs confirmation.'],
   'no-alarm': ['Ten alarm nie jest już aktywny.', 'This alarm is no longer active.'],
   rate: ['Za dużo poleceń naraz. Odczekaj chwilę.', 'Too many commands. Wait a moment.'],
@@ -167,7 +170,7 @@ function RaiseForm({ lang }: { lang: Lang }) {
 
 // ---------------------------------------------------------------------------------------------------------------
 function ActiveCard({ lang }: { lang: Lang }) {
-  const { active, state, identity, skew, end, ack, acked } = useAlarms();
+  const { active, state, identity, skew, end, ack, acked, user: me } = useAlarms();
   const elapsed = useElapsed(active?.at, skew);
   const [ending, setEnding] = useState(false);
   const [user, setUser] = useState('');
@@ -229,8 +232,14 @@ function ActiveCard({ lang }: { lang: Lang }) {
         <form onSubmit={report} className="flex flex-col gap-2 rounded-card bg-paper-2 p-3">
           <p className="tech-kicker">{L(lang, 'Zgłoś stan osób przy tym terminalu', 'Report the headcount at this terminal')}</p>
           <div className="grid gap-2 sm:grid-cols-[1fr_8rem_auto]">
-            <input className={field} value={user} maxLength={USER_MAX} onChange={(e) => setUser(e.target.value)}
-                   aria-label={L(lang, 'Kto zgłasza', 'Reported by')} placeholder={L(lang, 'Kto zgłasza (imię, funkcja)', 'Reported by (name, role)')} />
+            {me ? (
+              // logged in: the server records who you are, no free text
+              <p className="flex min-h-[48px] items-center gap-2 text-sm"><span className="text-ink-2">{L(lang, 'Zgłasza', 'Reported by')}:</span>
+                <span className="font-semibold">{me.name}</span></p>
+            ) : (
+              <input className={field} value={user} maxLength={USER_MAX} onChange={(e) => setUser(e.target.value)}
+                     aria-label={L(lang, 'Kto zgłasza', 'Reported by')} placeholder={L(lang, 'Kto zgłasza (imię, funkcja)', 'Reported by (name, role)')} />
+            )}
             <input className={field} value={count} inputMode="numeric" pattern="[0-9]*" maxLength={3}
                    onChange={(e) => setCount(e.target.value.replace(/\D/g, ''))}
                    aria-label={L(lang, 'Liczba osób', 'Number of people')} placeholder={L(lang, 'Osób', 'People')} />
@@ -419,18 +428,17 @@ function LogList({ lang }: { lang: Lang }) {
 
 // ---------------------------------------------------------------------------------------------------------------
 function Settings({ lang }: { lang: Lang }) {
-  const { identity, setIdentity, defaultName } = useAlarms();
+  const { identity, setIdentity, defaultName, user } = useAlarms();
   const [open, setOpen] = useState(defaultName);
   const [name, setName] = useState(identity.name);
-  const [role, setRole] = useState<TerminalRole>(identity.role);
   const [zone, setZone] = useState<TerminalZone | ''>(identity.zone ?? '');
   const valid = [...name.trim()].length >= 2;
-  useEffect(() => { setName(identity.name); setRole(identity.role); setZone(identity.zone ?? ''); }, [identity]);
+  useEffect(() => { setName(identity.name); setZone(identity.zone ?? ''); }, [identity]);
 
   function save(e: FormEvent) {
     e.preventDefault();
     if (!valid) return;
-    setIdentity({ name: name.trim(), role, zone: zone || null });
+    setIdentity({ name: name.trim(), zone: zone || null });
     setOpen(false);
   }
   return (
@@ -444,9 +452,13 @@ function Settings({ lang }: { lang: Lang }) {
       </div>
       <p className="mt-1 text-sm">
         <span className="font-semibold">{identity.name}</span>
-        {' · '}{identity.role === 'bridge' ? L(lang, 'mostek', 'bridge') : L(lang, 'załoga', 'crew')}
         {identity.zone ? ` · ${zoneLabel(lang, identity.zone)}` : ''}
         <span className="text-ink-2"> · {identity.terminalId}</span>
+      </p>
+      <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-ink-2">{L(lang, 'Obsługuje', 'Operated by')}:</span>
+        {user ? <><span className="font-semibold">{user.name}</span><RoleBadge lang={lang} role={user.role} /></>
+          : <span>{L(lang, 'nikt nie jest zalogowany (terminal załogi)', 'nobody logged in (crew terminal)')}</span>}
       </p>
       {open && (
         <form id="alarm-term-form" onSubmit={save} className="mt-3 flex flex-col gap-3">
@@ -454,15 +466,6 @@ function Settings({ lang }: { lang: Lang }) {
             <span className="tech-kicker">{L(lang, 'Nazwa terminala', 'Terminal name')}</span>
             <input className={field} value={name} maxLength={NAME_MAX} onChange={(e) => setName(e.target.value)} aria-invalid={!valid} />
           </label>
-          <fieldset>
-            <legend className="tech-kicker mb-1">{L(lang, 'Rola', 'Role')}</legend>
-            <div className="grid grid-cols-2 overflow-hidden rounded-card border border-line">
-              <button type="button" aria-pressed={role === 'crew'} onClick={() => setRole('crew')}
-                      className="alarm-seg tap min-h-[48px] bg-paper font-semibold">{L(lang, 'Załoga', 'Crew')}</button>
-              <button type="button" aria-pressed={role === 'bridge'} onClick={() => setRole('bridge')}
-                      className="alarm-seg tap min-h-[48px] border-l border-line bg-paper font-semibold">{L(lang, 'Mostek', 'Bridge')}</button>
-            </div>
-          </fieldset>
           <label className="flex flex-col gap-1">
             <span className="tech-kicker">{L(lang, 'Strefa terminala', 'Terminal zone')}</span>
             <select className={field} value={zone} onChange={(e) => setZone(e.target.value as TerminalZone | '')}>
@@ -471,13 +474,43 @@ function Settings({ lang }: { lang: Lang }) {
             </select>
           </label>
           <p className="text-xs text-ink-2">
-            {L(lang, 'Rola „Mostek” pozwala ogłaszać i kończyć alarmy. To ustawienie demonstracyjne, nie logowanie.',
-                     'The "Bridge" role may raise and end alarms. This is a demo setting, not a login.')}
+            {L(lang, 'Nazwa i strefa opisują urządzenie. Uprawnienia (konsola mostka) daje logowanie załogi, nie to ustawienie.',
+                     'Name and zone describe the device. Rights (bridge console) come from the crew login, not from this setting.')}
           </p>
           <button type="submit" disabled={!valid} className="tap min-h-[48px] self-start rounded-card bg-navy px-5 font-semibold text-paper disabled:opacity-50">
             {L(lang, 'Zapisz', 'Save')}
           </button>
         </form>
+      )}
+    </section>
+  );
+}
+
+/** Shown instead of the raise form to anyone without bridge rights. */
+function RaiseLocked({ lang }: { lang: Lang }) {
+  const auth = useAuthOptional();
+  const user = auth?.user ?? null;
+  return (
+    <section className="panel flex flex-col gap-3 p-4" aria-labelledby="alarm-locked-h">
+      <h3 id="alarm-locked-h" className="tech-title text-xl">{L(lang, 'Ogłaszanie alarmu', 'Raise an alarm')}</h3>
+      {user ? (
+        <p className="text-sm">
+          {L(lang, `Jesteś zalogowany jako ${user.name} (${user.rank}). Alarmy ogłasza i kończy oficer mostka albo kapitan. W razie zagrożenia zgłoś je na mostek.`,
+                   `You are logged in as ${user.name} (${user.rank}). Alarms are raised and ended by a bridge officer or the master. Report any danger to the bridge.`)}
+        </p>
+      ) : (
+        <>
+          <p className="text-sm">
+            {L(lang, 'Konsola mostka jest dla zalogowanego oficera mostka albo kapitana. Bez logowania widzisz stan alarmu i możesz go potwierdzić.',
+                     'The bridge console is for a logged-in bridge officer or the master. Without logging in you see the alarm status and can acknowledge it.')}
+          </p>
+          {auth && (
+            <button type="button" onClick={() => auth.openLogin('alarm')}
+                    className="tap-lg min-h-[56px] self-start rounded-card bg-navy px-5 font-bold uppercase tracking-[0.06em] text-on-strong">
+              {L(lang, 'Zaloguj się na mostek', 'Log in for the bridge')}
+            </button>
+          )}
+        </>
       )}
     </section>
   );
@@ -517,7 +550,7 @@ export default function AlarmPanel({ lang }: { lang: Lang }) {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
           <ActiveCard lang={lang} />
-          {bridge && <RaiseForm lang={lang} />}
+          {bridge ? <RaiseForm lang={lang} /> : <RaiseLocked lang={lang} />}
         </div>
         <div className="flex flex-col gap-4">
           <Settings lang={lang} />

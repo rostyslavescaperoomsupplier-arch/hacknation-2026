@@ -7,6 +7,8 @@ import { createServer as createHttpServer, type IncomingMessage, type Server } f
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 export const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -32,6 +34,7 @@ export async function startServer(extraEnv: Record<string, string> = {}): Promis
     PORT: String(port), ASSISTANT_FAKE: '1', NODE_ENV: 'test',
     RATE_IP_10MIN: '100000', RATE_IP_DAY: '100000', RATE_GLOBAL_DAY: '1000000',
     CREW_API: 'http://127.0.0.1:9', // closed port unless a test overrides it
+    ACCOUNTS_DEMO_PIN: DEMO_PIN, // crew login (server/auth.ts): one PIN for every account in tests
   }, extraEnv);
   const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', 'server/index.ts'], {
     cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'],
@@ -48,6 +51,27 @@ export async function startServer(extraEnv: Record<string, string> = {}): Promis
   }
   child.kill('SIGKILL');
   throw new Error('server did not start:\n' + srv.log.join(''));
+}
+
+// ---------- crew login (server/auth.ts) ----------
+export const DEMO_PIN = '2468';
+
+/** Log in as the Kapitan (or the first account) of the server's roster; returns the `ju_session=...` cookie or ''. */
+export async function login(srv: Srv): Promise<string> {
+  const roster = await (await fetch(srv.base + '/api/auth/roster', { headers: { 'x-forwarded-for': freshIp() } })).json();
+  const m = roster.members?.find((x: { role: string }) => x.role === 'captain') ?? roster.members?.[0];
+  if (!m) return '';
+  const r = await fetch(srv.base + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': freshIp() },
+    body: JSON.stringify({ method: 'pin', id: m.id, pin: DEMO_PIN }) });
+  return r.ok ? (r.headers.get('set-cookie') ?? '').split(';')[0] : '';
+}
+
+/** AUTH_DIR with a cached roster (one Kapitan), so a server whose crew DB is down still has an account to log in. */
+export function cachedRosterDir(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'adv-auth-'));
+  writeFileSync(path.join(dir, 'accounts.json'), JSON.stringify({ version: 1, syncedAt: new Date().toISOString(), pins: {},
+    members: [{ id: 1, name: 'Anna Nowak', rank: 'Kapitan', department: 'Pokład', role: 'captain', rfid: null, rfidType: null }] }));
+  return dir;
 }
 
 export function stop(srv?: Srv): Promise<void> {

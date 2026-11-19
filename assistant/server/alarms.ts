@@ -4,9 +4,11 @@
  *
  *   WebSocket /api/alarms/ws (JSON text frames, types in shared/alarms.ts, full protocol in docs/ALARMS.md)
  *     -> hello { terminalId, name, role: 'bridge'|'crew', zone?, place? }   <- welcome { terminalId, role, state }
- *     -> raise { kind, zone, blocked, message, drill, confirm? }  (role 'bridge' only; a real alarm needs confirm: true)
- *     -> ack { alarmId, user?, headcount? }                       (any terminal)
- *     -> end { alarmId }                                          (role 'bridge' only)
+ *        (the role in welcome is the EFFECTIVE one: 'bridge' only when the handshake carried the session cookie of a
+ *        logged-in 'bridge' / 'captain' account, see server/auth.ts; anything else is 'crew')
+ *     -> raise { kind, zone, blocked, message, drill, confirm? }  (session role bridge|captain; a real alarm needs confirm: true)
+ *     -> ack { alarmId, user?, headcount? }                       (any terminal; a logged-in user replaces `user`)
+ *     -> end { alarmId }                                          (session role bridge|captain)
  *     -> ping                                                     <- pong { now }
  *     <- state { state, reason } after every change (snapshot: active alarm, muster accountability, terminals online)
  *     <- error { code, message }
@@ -20,8 +22,9 @@
  * Limits: origin check (guard.ts), connections total / per IP, 4 KB frames, hello within 10 s, per-connection token
  * buckets (all frames, and a stricter one for raise), heartbeats (ping every 25 s, dead sockets dropped).
  *
- * HACKATHON DEMO: the role is chosen on the terminal, so it is NOT authentication. Before real use put the bridge role
- * behind per-terminal credentials / the ship network and keep the ship's real alarm system as the primary signal.
+ * Roles come from the crew login (server/auth.ts): the WebSocket handshake carries the `ju_session` cookie, and raise /
+ * end look the session up again on every command (logout or expiry takes the right away at once, even on an open
+ * socket). raisedBy / endedBy / acks name the logged-in person. The ship's real alarm system stays the primary signal.
  *
  * The 'upgrade' event is shared with crew-video.ts, whose listener destroys every socket that is not its own path.
  * attachAlarms() therefore takes over 'upgrade': it serves /api/alarms/ws and passes every other upgrade to the
@@ -35,6 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clientIp, corsOrigin, originAllowed, tokenOk } from './guard.ts';
 import { crewEnabled, crewGet } from './crew.ts';
+import { attachAuth, getSession, hasRole, type Session } from './auth.ts';
 import { CREW_ROOM_PLACES } from '../shared/crew-map.ts';
 import {
   ALARM_ZONES, HEADCOUNT_MAX, MESSAGE_MAX, NAME_MAX, PLACE_RE, TERMINAL_ID_RE, USER_MAX,
@@ -73,6 +77,8 @@ type Bucket = { tokens: number; last: number };
 type Rate = { cap: number; perSec: number };
 interface Conn {
   socket: Socket;
+  /** the upgrade request (headers only are used: the session cookie is looked up again on every raise / end) */
+  req: IncomingMessage;
   ip: string;
   buffer: Buffer;
   fragments: Buffer[];
@@ -266,15 +272,26 @@ function hello(c: Conn, d: Payload) {
   if (!TERMINAL_ID_RE.test(terminalId) || len(name) < 2 || len(name) > NAME_MAX || !role || (d.zone != null && !zone))
     return error(c, 'invalid', 'hello needs terminalId (3-40 of A-Z 0-9 _ -), name (2-40 characters), role bridge|crew, zone or null.');
   if (!zone && place && CREW_ROOM_PLACES[place]) zone = CREW_ROOM_PLACES[place].zone;
-  c.term = { terminalId, name, role, zone, place };
+  // the terminal may ask for 'bridge'; it gets it only with a bridge / captain login
+  const effective: TerminalRole = role === 'bridge' && bridgeSession(c) ? 'bridge' : 'crew';
+  c.term = { terminalId, name, role: effective, zone, place };
   clearTimeout(c.helloTimer);
-  send(c, { type: 'welcome', terminalId, role, state: snapshot() });
+  send(c, { type: 'welcome', terminalId, role: effective, state: snapshot() });
   void refreshMuster('terminals');
 }
 
+/** Session of this connection when it may command alarms (role bridge or captain), else null. Looked up every time. */
+function bridgeSession(c: Conn): Session | null {
+  const s = getSession(c.req);
+  return s && hasRole(s.role, ['bridge']) ? s : null;
+}
+const who = (s: Session) => `${s.name}, ${s.rank}`;
+const whoShort = (s: Session) => { const w = who(s); return len(w) > USER_MAX ? [...s.name].slice(0, USER_MAX).join('') : w; };
+
 function raise(c: Conn, d: Payload) {
   const t = c.term!;
-  if (t.role !== 'bridge') return error(c, 'forbidden', 'Only a bridge terminal may raise an alarm.');
+  const s = bridgeSession(c);
+  if (!s) return error(c, 'forbidden', 'Log in as a bridge officer or the master to raise an alarm.');
   if (!take(c.raise, RAISE_RATE)) return error(c, 'rate', 'Too many alarms raised, wait a moment.');
   const message = typeof d.message === 'string' ? clean(d.message) : d.message == null ? '' : null;
   if (!isAlarmKind(d.kind) || typeof d.drill !== 'boolean' || message === null ||
@@ -285,20 +302,20 @@ function raise(c: Conn, d: Payload) {
   const now = new Date().toISOString();
   if (active) {
     active.endedAt = now;
-    active.endedBy = t.name;
+    active.endedBy = `${who(s)} (${t.name})`;
     active.endReason = 'replaced';
   }
   const alarm: Alarm = {
     id: randomUUID(), kind: d.kind, zone: (d.zone as Alarm['zone']) ?? null, blocked: (d.blocked as Alarm['blocked']) ?? null,
-    message, drill: d.drill, raisedBy: t.name, raisedById: t.terminalId, at: now, endedAt: null,
+    message, drill: d.drill, raisedBy: `${who(s)} (${t.name})`, raisedById: t.terminalId, at: now, endedAt: null,
     // the bridge terminal that raised it has seen it: acknowledged at once (reaction time 0)
-    acks: { [t.terminalId]: { at: now, name: t.name, zone: t.zone } },
+    acks: { [t.terminalId]: { at: now, name: t.name, zone: t.zone, user: whoShort(s) } },
   };
   active = alarm;
   log.unshift(alarm);
   if (log.length > LOG_CAP) log.length = LOG_CAP;
   scheduleSave();
-  console.log(`[alarms] RAISE ${alarm.drill ? 'drill' : 'REAL'} ${alarm.kind} zone=${alarm.zone ?? '-'} by ${t.name} (${t.terminalId})`);
+  console.log(`[alarms] RAISE ${alarm.drill ? 'drill' : 'REAL'} ${alarm.kind} zone=${alarm.zone ?? '-'} by ${who(s)} #${s.accountId} at ${t.name} (${t.terminalId})`);
   void refreshMuster('raised');
 }
 
@@ -313,6 +330,9 @@ function ack(c: Conn, d: Payload) {
     if (len(user) > USER_MAX) return error(c, 'invalid', `user: at most ${USER_MAX} characters.`);
     if (!user) user = undefined;
   }
+  // a logged-in person is recorded as who they are, whatever the form said
+  const s = getSession(c.req);
+  if (s) user = whoShort(s);
   let headcount: number | undefined;
   if (d.headcount != null) {
     if (typeof d.headcount !== 'number' || !Number.isInteger(d.headcount) || d.headcount < 0 || d.headcount > HEADCOUNT_MAX)
@@ -331,12 +351,13 @@ function ack(c: Conn, d: Payload) {
 
 function end(c: Conn, d: Payload) {
   const t = c.term!;
-  if (t.role !== 'bridge') return error(c, 'forbidden', 'Only a bridge terminal may end an alarm.');
+  const s = bridgeSession(c);
+  if (!s) return error(c, 'forbidden', 'Log in as a bridge officer or the master to end an alarm.');
   if (typeof d.alarmId !== 'string' || !active || active.id !== d.alarmId) return error(c, 'no-alarm', 'This alarm is not active any more.');
   active.endedAt = new Date().toISOString();
-  active.endedBy = t.name;
+  active.endedBy = `${who(s)} (${t.name})`;
   active.endReason = 'ended';
-  console.log(`[alarms] END ${active.kind} by ${t.name}`);
+  console.log(`[alarms] END ${active.kind} by ${who(s)} #${s.accountId} at ${t.name}`);
   active = null;
   scheduleSave();
   void refreshMuster('ended');
@@ -437,7 +458,7 @@ function accept(req: IncomingMessage, socket: Socket, head: Buffer) {
   socket.setNoDelay(true);
   const now = Date.now();
   const c: Conn = {
-    socket, ip, buffer: Buffer.alloc(0), fragments: [], fragmentLength: 0, alive: true, term: null,
+    socket, req, ip, buffer: Buffer.alloc(0), fragments: [], fragmentLength: 0, alive: true, term: null,
     helloTimer: setTimeout(() => close(c, 1008), HELLO_TIMEOUT_MS),
     msg: { tokens: MSG_RATE.cap, last: now }, raise: { tokens: RAISE_RATE.cap, last: now }, strikes: 0,
   };
@@ -455,6 +476,8 @@ const attached = new WeakSet<Server>();
 export function attachAlarms(server: Server): void {
   if (attached.has(server)) return;
   attached.add(server);
+  // crew login: /api/auth/* + request context for the crew chat tools (no-op when index.ts already attached it)
+  attachAuth(server);
   const others: UpgradeListener[] = [];
   const router: UpgradeListener = (req, socket, head) => {
     let p = '';

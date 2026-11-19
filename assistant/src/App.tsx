@@ -3,8 +3,10 @@
 //       | #lacznosc (crew voice / video calls between terminals, src/crew/).
 // One ShipPanel instance serves both ship tabs (only its mode changes), so the 10 MB model loads once;
 // it stays mounted under `hidden` and pauses itself when not visible.
-// The comms panel is mounted from the start (not lazily): a configured terminal must be reachable from every tab,
-// its incoming-call dialog is a portal above the whole app.
+// The comms panel is mounted as soon as someone is logged in (not lazily): a configured terminal must be reachable
+// from every tab, its incoming-call dialog is a portal above the whole app.
+// Crew login (src/auth, docs/ACCOUNTS.md): header "Zaloguj" / user chip, login sheet; it opens by itself when a
+// protected part needs it (Łączność tab, crew layer on Statek, Alarmy raise). Evacuation and the chat stay public.
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import Assistant from './Assistant';
 import { STR } from './i18n';
@@ -17,19 +19,22 @@ import MotionCues from './motion-cues/MotionCues';
 import CrewVideoChat from './crew/CrewVideoChat';
 // Ship alarm system (docs/ALARMS.md): provider = live connection, overlay = full-screen alarm + post-ack banner.
 import { AlarmProvider, AlarmOverlay } from './alarm';
+import { AuthProvider, LoginSheet, UserChip, useAuth } from './auth';
 
 const ShipPanel = lazy(() => import('./ship/ShipPanel'));
 const DrillsPanel = lazy(() => import('./drills/DrillsPanel'));
 const AlarmPanel = lazy(() => import('./alarm/AlarmPanel'));
+const StatsPanel = lazy(() => import('./stats/StatsPanel'));
 
-type Tab = 'asystent' | 'alarmy' | 'statek' | 'ewakuacja' | 'cwiczenia' | 'lacznosc';
+type Tab = 'asystent' | 'alarmy' | 'statek' | 'ewakuacja' | 'cwiczenia' | 'lacznosc' | 'statystyki';
 // Alarmy right after Asystent: safety-critical
-const TABS: Tab[] = ['asystent', 'alarmy', 'statek', 'ewakuacja', 'cwiczenia', 'lacznosc'];
+const TABS: Tab[] = ['asystent', 'alarmy', 'statek', 'ewakuacja', 'cwiczenia', 'lacznosc', 'statystyki'];
 
 // Phone bottom bar: 6 tabs at 360 px = 60 px each (>= 48 px), so an icon above a short label (desktop: label only).
 const TAB_ICON: Record<Tab, string[]> = {
   asystent: ['M4 5h16v11H9l-4 3.5V16H4Z', 'M8 9.5h8', 'M8 12.5h5'],
   alarmy: ['M12 3.5 21 19.5H3Z', 'M12 9.5v4.5', 'M12 16.8v.2'],
+  statystyki: ['M4 20V10', 'M10 20V4', 'M16 20v-7', 'M21 20H3'],
   statek: ['M2.5 14.5h19l-2.5 5h-14Z', 'M6 14.5v-4h12v4', 'M9 10.5V7h5v3.5', 'M11.5 7V4'],
   ewakuacja: ['M13.5 4.5a1.5 1.5 0 1 0 0.01 0', 'M10 20l2-5.5 2.5 2.5V20', 'M8 11l3-3h3l2 3.5 2.5 1', 'M12 14.5 11 8'],
   cwiczenia: ['M6 4h12v16H6Z', 'M9 8.5l1.2 1.2L12.5 7.5', 'M9 13.5l1.2 1.2 2.3-2.2', 'M14.5 9h1.5', 'M14.5 14h1.5'],
@@ -57,6 +62,18 @@ function tabFromHash(): Tab {
 }
 
 export default function App({ initialLang }: { initialLang: Lang }) {
+  return <AuthProvider><Shell initialLang={initialLang} /></AuthProvider>;
+}
+
+const LockIcon = () => (
+  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round"
+       strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <rect x="5" y="10.5" width="14" height="10" rx="1.5" /><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" /><path d="M12 14.5v2.5" />
+  </svg>
+);
+
+function Shell({ initialLang }: { initialLang: Lang }) {
+  const { user, ready, openLogin } = useAuth();
   const [lang, setLang] = useState<Lang>(initialLang);
   const s = STR[lang];
   const [tab, setTabState] = useState<Tab>(tabFromHash);
@@ -68,7 +85,7 @@ export default function App({ initialLang }: { initialLang: Lang }) {
   const [typing, setTyping] = useState(false);
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [themeLive, setThemeLive] = useState('');
-  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ asystent: null, alarmy: null, statek: null, ewakuacja: null, cwiczenia: null, lacznosc: null });
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ asystent: null, alarmy: null, statek: null, ewakuacja: null, cwiczenia: null, lacznosc: null, statystyki: null });
 
   const setTab = useCallback((t: Tab) => {
     setTabState(t);
@@ -133,11 +150,17 @@ export default function App({ initialLang }: { initialLang: Lang }) {
 
   const label: Record<Tab, string> = {
     asystent: s.tab_assistant, alarmy: s.tab_alarms, statek: s.tab_ship, ewakuacja: s.tab_evac, cwiczenia: s.tab_drills,
-    lacznosc: s.tab_comms,
+    lacznosc: s.tab_comms, statystyki: lang === 'pl' ? 'Statystyki' : 'Stats',
   };
   // shorter phone labels where the desktop one does not fit 72 px
   const short: Partial<Record<Tab, string>> = lang === 'pl' ? { statek: 'Statek' } : { statek: 'Ship', ewakuacja: 'Evac' };
   const openComms = useCallback(() => setTab('lacznosc'), [setTab]);
+  const L = (pl: string, en: string) => (lang === 'pl' ? pl : en);
+
+  // Łączność needs a login: offer it once each time the tab is opened without one
+  useEffect(() => {
+    if (ready && !user && tab === 'lacznosc') openLogin('comms');
+  }, [tab, ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function onTabKey(e: KeyboardEvent<HTMLButtonElement>) {
     const i = TABS.indexOf(tab);
@@ -173,7 +196,7 @@ export default function App({ initialLang }: { initialLang: Lang }) {
           </a>
 
           <div role="tablist" aria-label={s.tabs_label}
-               className="app-tabs fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)]
+               className="app-tabs fixed inset-x-0 bottom-0 z-30 grid grid-cols-7 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)]
                           lg:static lg:ml-4 lg:flex lg:self-stretch lg:border-t-0 lg:bg-transparent lg:pb-0">
             {TABS.map((t) => (
               <button key={t} ref={(el) => { tabRefs.current[t] = el; }} type="button" role="tab" id={`tab-${t}`}
@@ -196,6 +219,7 @@ export default function App({ initialLang }: { initialLang: Lang }) {
           </div>
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            <UserChip lang={lang} />
             <button type="button" aria-pressed={theme === 'night'} onClick={toggleNight} title={s.night}
                     aria-label={s.night}
                     className="hdr-btn tap inline-flex items-center justify-center gap-2 rounded-card border border-line bg-paper px-3 text-sm font-semibold uppercase text-ink-2 hover:text-ink">
@@ -257,11 +281,38 @@ export default function App({ initialLang }: { initialLang: Lang }) {
 
         <section id="panel-lacznosc" role="tabpanel" aria-labelledby="tab-lacznosc" hidden={tab !== 'lacznosc'}
                  className="gutter mx-auto max-w-6xl py-4">
-          <CrewVideoChat lang={lang} onOpen={openComms} />
+          {user ? <CrewVideoChat lang={lang} onOpen={openComms} /> : (
+            <div className="panel mx-auto flex max-w-xl flex-col items-start gap-3 p-6">
+              <span className="text-gold-ink"><LockIcon /></span>
+              <h2 className="tech-title text-h2">{L('Łączność', 'Comms')}</h2>
+              <p>{L('Rozmowy głosowe i wideo między terminalami są dla zalogowanej załogi. Zbliż kartę albo zaloguj się PIN-em.',
+                    'Voice and video calls between terminals are for logged-in crew. Tap your card or log in with your PIN.')}</p>
+              <button type="button" onClick={() => openLogin('comms')}
+                      className="tap-lg min-h-[56px] rounded-card bg-navy px-5 font-bold uppercase tracking-[0.06em] text-on-strong">
+                {L('Zaloguj', 'Log in')}
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section id="panel-statystyki" role="tabpanel" aria-labelledby="tab-statystyki" hidden={tab !== 'statystyki'}
+                 className="gutter mx-auto max-w-6xl py-4">
+          {user ? (seen.has('statystyki') && <Suspense fallback={fallback}><StatsPanel lang={lang} /></Suspense>) : (
+            <div className="panel mx-auto flex max-w-xl flex-col items-start gap-3 p-6">
+              <span className="text-gold-ink"><LockIcon /></span>
+              <h2 className="tech-title text-h2">{L('Statystyki', 'Statistics')}</h2>
+              <p>{L('Ranking siłowni i statystyki statku są dla zalogowanej załogi.', 'The gym ranking and ship statistics are for logged-in crew.')}</p>
+              <button type="button" onClick={() => openLogin('comms')}
+                      className="tap-lg min-h-[56px] rounded-card bg-navy px-5 font-bold uppercase tracking-[0.06em] text-on-strong">
+                {L('Zaloguj', 'Log in')}
+              </button>
+            </div>
+          )}
         </section>
       </main>
 
       <AlarmOverlay lang={lang} onShowRoute={(z, b) => showRoute(z, b)} onOpenPanel={() => setTab('alarmy')} />
+      <LoginSheet lang={lang} />
       <MotionCues lang={lang} />
     </div>
     </AlarmProvider>

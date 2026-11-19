@@ -2,10 +2,14 @@
 // A fake crew server (node http, random port, fixed JSON shaped like the real crew/server) stands in for the database;
 // the assistant runs with ASSISTANT_FAKE=1, whose fake Claude calls find_crew {query:"bosman"} when the question says FAKE_TOOL.
 // One smoke test also hits the REAL crew server on 127.0.0.1:8790 when it is running (skipped otherwise).
+// Crew data needs a logged-in crew member (server/auth.ts, finding #2): every server here runs with ACCOUNTS_DEMO_PIN
+// and the helpers log in as the Kapitan of its crew DB once, then send that session cookie (srv.cookie).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,7 +90,8 @@ function startFakeCrew(): Promise<FakeCrew> {
 }
 
 // ---------- assistant server ----------
-interface Srv { base: string; child: ChildProcess; log: string[]; exited: boolean }
+interface Srv { base: string; child: ChildProcess; log: string[]; exited: boolean; cookie?: string }
+const DEMO_PIN = '2468';
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -101,7 +106,7 @@ async function startServer(extraEnv: Record<string, string>): Promise<Srv> {
   const port = await freePort();
   const env: Record<string, string | undefined> = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('ANTHROPIC_') || ['ASSISTANT_TOKEN', 'ALLOWED_ORIGINS', 'CREW_API'].includes(k)) delete env[k];
-  Object.assign(env, { PORT: String(port), ASSISTANT_FAKE: '1', NODE_ENV: 'test' }, extraEnv);
+  Object.assign(env, { PORT: String(port), ASSISTANT_FAKE: '1', NODE_ENV: 'test', ACCOUNTS_DEMO_PIN: DEMO_PIN }, extraEnv);
   const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', 'server/index.ts'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const srv: Srv = { base: `http://127.0.0.1:${port}`, child, log: [], exited: false };
   child.stdout!.on('data', (d) => srv.log.push(String(d)));
@@ -110,11 +115,21 @@ async function startServer(extraEnv: Record<string, string>): Promise<Srv> {
   const t0 = Date.now();
   while (Date.now() - t0 < 15_000) {
     if (srv.exited) throw new Error('server exited on start:\n' + srv.log.join(''));
-    try { if ((await fetch(srv.base + '/api/health')).ok) return srv; } catch { /* not up yet */ }
+    try { if ((await fetch(srv.base + '/api/health')).ok) { await loginCaptain(srv); return srv; } } catch { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 100));
   }
   child.kill('SIGKILL');
   throw new Error('server did not start:\n' + srv.log.join(''));
+}
+
+/** Log in as the Kapitan (or the first account) of the server's roster; leaves srv.cookie unset when there is none. */
+async function loginCaptain(srv: Srv) {
+  const roster = await (await fetch(srv.base + '/api/auth/roster')).json();
+  const m = roster.members.find((x: any) => x.role === 'captain') ?? roster.members[0];
+  if (!m) return;
+  const r = await fetch(srv.base + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'pin', id: m.id, pin: DEMO_PIN }) });
+  if (r.ok) srv.cookie = (r.headers.get('set-cookie') ?? '').split(';')[0];
 }
 
 function stop(srv?: Srv): Promise<void> {
@@ -128,10 +143,17 @@ function stop(srv?: Srv): Promise<void> {
 
 let ipN = 1;
 const freshIp = () => `10.40.${Math.floor(ipN / 250)}.${(ipN++ % 250) + 1}`;
+// both send the server's session cookie unless `cookie` is given in headers ('' = no session)
+const withCookie = (srv: Srv, h: Record<string, string>) => {
+  const out = { ...h };
+  if (!('cookie' in out) && srv.cookie) out.cookie = srv.cookie;
+  if (out.cookie === '') delete out.cookie;
+  return out;
+};
 const get = (srv: Srv, p: string, headers: Record<string, string> = {}) =>
-  fetch(srv.base + p, { headers: { 'x-forwarded-for': freshIp(), ...headers } });
+  fetch(srv.base + p, { headers: withCookie(srv, { 'x-forwarded-for': freshIp(), ...headers }) });
 const post = (srv: Srv, p: string, body: unknown, headers: Record<string, string> = {}) =>
-  fetch(srv.base + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': freshIp(), ...headers }, body: JSON.stringify(body) });
+  fetch(srv.base + p, { method: 'POST', headers: withCookie(srv, { 'content-type': 'application/json', 'x-forwarded-for': freshIp(), ...headers }), body: JSON.stringify(body) });
 const ask = (content: string) => ({ lang: 'pl', messages: [{ role: 'user', content }] });
 
 function checkNoMarkers(texts: string[]) {
@@ -287,7 +309,34 @@ describe('crew link (fake crew server)', () => {
     assert.equal((await get(srv, '/api/crew/rooms', { 'x-forwarded-for': ip2 })).status, 200);
   });
 
+  test('logged in as the Kapitan of the fake crew DB', () => { assert.ok(srv.cookie, 'login failed:\n' + srv.log.join('')); });
+
+  test('without a session: proxy 401 for every data path, never reaches the crew DB', async () => {
+    const n = crew.hits.length;
+    for (const p of ['summary', 'rooms', 'rooms/14', 'crew', 'crew?q=bosman', 'terminals', 'activity', 'alerts']) {
+      const r = await get(srv, '/api/crew/' + p, { cookie: '' });
+      assert.equal(r.status, 401, p);
+      assert.deepEqual(await r.json(), { error: 'login required' });
+    }
+    assert.equal((await get(srv, '/api/crew/summary', { cookie: 'ju_session=' + 'x'.repeat(43) })).status, 401, 'forged cookie');
+    assert.equal(crew.hits.length, n);
+  });
+
+  test('without a session the chat crew tools answer "login required" (no crew data in the reply)', async () => {
+    const n = crew.hits.length;
+    const j = await (await post(srv, '/api/chat', ask('FAKE_TOOL gdzie jest bosman?'), { cookie: '' })).json();
+    const text = j.text.join(' ');
+    assert.match(text, /login required/);
+    assert.doesNotMatch(text, /Natalia Melnyk|Magazyn bosmański/);
+    assert.deepEqual(j.actions, []);
+    const ev = await readSSE(await post(srv, '/api/chat/stream', ask('FAKE_TOOL gdzie jest bosman?'), { cookie: '' }));
+    assert.equal(ev[ev.length - 1].event, 'done');
+    assert.doesNotMatch(JSON.stringify(ev), /Natalia Melnyk/);
+    assert.equal(crew.hits.length, n, 'the tool did not query the crew DB');
+  });
+
   test('FAKE_TOOL through /api/chat: find_crew result reflected in the answer, ROUTE to the zone', async () => {
+    const hits0 = crew.hits.length;
     const r = await post(srv, '/api/chat', ask('FAKE_TOOL gdzie jest bosman?'));
     assert.equal(r.status, 200);
     const j = await r.json();
@@ -299,7 +348,8 @@ describe('crew link (fake crew server)', () => {
     checkNoMarkers(j.text);
     assert.equal(j.fallback, false);
     assert.deepEqual(j.actions.filter((a: any) => a.type === 'route').map((a: any) => a.zone), [CREW_ROOM_PLACES['D2-08'].zone]);
-    assert.ok(crew.hits.some((h) => h === 'GET /api/crew'), 'tool fetched the crew list');
+    // (the list may come from the proxy's 3 s cache of an earlier test; the names above can only come from the tool)
+    assert.ok(hits0 >= 0 && crew.hits.some((h) => h === 'GET /api/crew'), 'tool fetched the crew list');
   });
 
   test('FAKE_TOOL through /api/chat/stream: deltas from both rounds, no marker leaks, done == /api/chat', async () => {
@@ -333,7 +383,16 @@ describe('crew link (fake crew server)', () => {
 // ---------- crew database down / off ----------
 describe('crew link: database down', () => {
   let srv: Srv;
-  before(async () => { srv = await startServer({ CREW_API: `http://127.0.0.1:${await freePort()}` }); });
+  before(async () => {
+    // the crew DB was reachable before: the roster cached in accounts.json lets the crew log in while it is down
+    const authDir = mkdtempSync(path.join(tmpdir(), 'crew-down-auth-'));
+    mkdirSync(authDir, { recursive: true });
+    writeFileSync(path.join(authDir, 'accounts.json'), JSON.stringify({ version: 1, syncedAt: new Date().toISOString(), pins: {},
+      members: [{ id: 1, name: 'Bartosz Kozłowski', rank: 'Kapitan', department: 'Pokład', role: 'captain', rfid: null, rfidType: null }] }));
+    srv = await startServer({ CREW_API: `http://127.0.0.1:${await freePort()}`, AUTH_DIR: authDir });
+  });
+
+  test('login works from the cached roster while the crew DB is down', () => { assert.ok(srv.cookie, srv.log.join('')); });
   after(async () => { await stop(srv); });
 
   test('proxy answers 503 {error:"crew database unavailable"}', async () => {
@@ -379,6 +438,11 @@ describe('runCrewTool', () => {
     crew = await startFakeCrew();
     process.env.CREW_API = crew.base;
     mod = await import('../server/crew.ts');
+    // closed until server/auth.ts registers its check (see the auth tests); this suite tests the tool content
+    const closed = await mod.runCrewTool('crew_summary', {});
+    assert.equal(closed.isError, true);
+    assert.match(closed.content, /login required/);
+    mod.setCrewAccessCheck(() => true);
   });
   after(async () => { await new Promise((r) => crew.server.close(r)); });
 
