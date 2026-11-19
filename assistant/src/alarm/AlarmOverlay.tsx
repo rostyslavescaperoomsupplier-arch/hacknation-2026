@@ -8,6 +8,7 @@ import type { Lang } from '../types';
 import { ZONE, type ZoneId, type Stair } from '../ship/routes';
 import { playAlarm, stopAlarm } from '../drills/alarm';
 import { isAlarmZone, type Alarm } from '../../shared/alarms';
+import { SENSOR, sensorLabel } from '../../shared/sensors';
 import { useAlarms, useElapsed } from './AlarmProvider';
 import { L, actionsFor, clock, kindName, patternFor, signalFor, tx } from './kinds';
 import './alarm.css';
@@ -176,6 +177,12 @@ export default function AlarmOverlay({ lang, onShowRoute, onOpenPanel }: Props) 
               {L(lang, 'Miejsce', 'Location')}: {tx(lang, zone.name)} <span className="font-normal text-ink-2">· {tx(lang, zone.deck)}</span>
             </p>
           )}
+          {(active.sensors ?? []).filter((id) => SENSOR[id]).map((id) => (
+            <p key={id} className="flex items-center gap-2 text-lg font-semibold text-danger">
+              <span aria-hidden="true" className="sensor-dot" />
+              {L(lang, 'Zadziałała', 'Triggered')}: {sensorLabel(SENSOR[id], lang)} <span className="font-normal text-ink-2">({id})</span>
+            </p>
+          ))}
           {active.blocked && (
             <p className="text-lg font-semibold text-danger">
               {L(lang, 'Zablokowane', 'Blocked')}: {active.blocked === 'stair-aft' ? L(lang, 'schody rufowe', 'aft stairwell') : L(lang, 'schody dziobowe', 'forward stairwell')}

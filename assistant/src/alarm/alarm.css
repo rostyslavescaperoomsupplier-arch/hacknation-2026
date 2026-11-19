@@ -39,3 +39,9 @@ html[data-alarm-banner] .app-header { top: 48px; }
 /* .tech-title sets the ink colour; on the red / orange bars the text takes the bar's colour */
 .alarm-stripe .tech-title, .alarm-banner .tech-title { color: inherit; }
 .alarm-overlay h2[tabindex="-1"]:focus-visible { outline: none; }
+
+/* fire detector that went off (alarm screen, bridge panel, ship map) */
+.sensor-dot { display: inline-block; width: 0.8em; height: 0.8em; border-radius: 50%; background: var(--c-danger); flex: none;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-danger) 70%, transparent); animation: sensor-pulse 1s ease-out infinite; }
+@keyframes sensor-pulse { to { box-shadow: 0 0 0 0.6em color-mix(in srgb, var(--c-danger) 0%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .sensor-dot { animation: none; box-shadow: 0 0 0 0.25em color-mix(in srgb, var(--c-danger) 35%, transparent); } }

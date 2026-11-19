@@ -10,6 +10,7 @@ import {
   type Alarm, type AlarmErrorCode, type AlarmKind, type AlarmZone, type BlockedStair, type TerminalRole, type TerminalZone,
 } from '../../shared/alarms';
 import { useAlarms, useElapsed } from './AlarmProvider';
+import { SENSOR, sensorLabel, sensorsIn } from '../../shared/sensors';
 import { useAuthOptional } from '../auth/AuthProvider';
 import RoleBadge from '../auth/RoleBadge';
 import { L, clock, kindName, reaction, tx } from './kinds';
@@ -64,15 +65,17 @@ function RaiseForm({ lang }: { lang: Lang }) {
   const [kind, setKind] = useState<AlarmKind>('general');
   const [zone, setZone] = useState<AlarmZone | ''>('');
   const [blocked, setBlocked] = useState<BlockedStair | ''>('');
+  const [sensor, setSensor] = useState('');
   const [message, setMessage] = useState('');
   const [drill, setDrill] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const ids = useId();
 
-  useEffect(() => { setConfirming(false); }, [kind, zone, blocked, drill]);
+  useEffect(() => { setConfirming(false); }, [kind, zone, blocked, drill, sensor]);
+  useEffect(() => { setSensor(''); }, [kind, zone]);
 
   function send(confirm: boolean) {
-    const ok = raise({ kind, zone: zone || null, blocked: blocked || null, message: message.trim(), drill, ...(confirm ? { confirm: true } : {}) });
+    const ok = raise({ kind, zone: zone || null, blocked: blocked || null, message: message.trim(), drill, ...(sensor ? { sensors: [sensor] } : {}), ...(confirm ? { confirm: true } : {}) });
     if (ok) { setConfirming(false); setMessage(''); }
   }
   function submit(e: FormEvent) {
@@ -113,6 +116,15 @@ function RaiseForm({ lang }: { lang: Lang }) {
             <option value="stair-fwd">{stairLabel(lang, 'stair-fwd')}</option>
           </select>
         </label>
+        {kind === 'fire' && (
+          <label className="flex flex-col gap-1 sm:col-span-2">
+            <span className="tech-kicker">{L(lang, 'Czujka, która zadziałała (opcjonalnie)', 'Detector that went off (optional)')}</span>
+            <select className={field} value={sensor} onChange={(e) => setSensor(e.target.value)}>
+              <option value="">{L(lang, 'Nie wiadomo / zgłoszenie od osoby', 'Unknown / reported by a person')}</option>
+              {sensorsIn(zone || null).map((s) => <option key={s.id} value={s.id}>{s.id} · {sensorLabel(s, lang)}</option>)}
+            </select>
+          </label>
+        )}
       </div>
 
       <label className="flex flex-col gap-1">
@@ -225,6 +237,14 @@ function ActiveCard({ lang }: { lang: Lang }) {
           {zone && <>{tx(lang, zone.name)} · {tx(lang, zone.deck)}</>}
           {active.blocked && <span className="font-semibold text-danger">{zone ? ' · ' : ''}{L(lang, 'zablokowane', 'blocked')}: {stairLabel(lang, active.blocked)}</span>}
         </p>
+      )}
+      {(active.sensors ?? []).filter((id) => SENSOR[id]).length > 0 && (
+        <ul className="flex flex-col gap-1 text-sm font-semibold text-danger">
+          {(active.sensors ?? []).filter((id) => SENSOR[id]).map((id) => (
+            <li key={id} className="flex items-center gap-2"><span aria-hidden="true" className="sensor-dot" />{L(lang, 'Czujka', 'Detector')} {id}: {sensorLabel(SENSOR[id], lang)}</li>
+          ))}
+          <li className="font-normal text-ink-2">{L(lang, 'Miejsce czujki widać na modelu 3D (Statek 3D, Ewakuacja).', 'The detector is marked on the 3D model (Ship 3D, Evacuation).')}</li>
+        </ul>
       )}
       {active.message && <p className="rounded-card bg-paper-2 p-3">{active.message}</p>}
 

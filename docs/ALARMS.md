@@ -149,3 +149,11 @@ Uprząż: serwer http + `attachAlarms` + `handleAlarmHttp` + prawdziwy `attachCr
 - Terminale z tym samym kodem z bazy (dwie przeglądarki jako T-D4-01-A) dzielą jedno potwierdzenie.
 - Oczekiwana liczba osób to zameldowania czytnikami, nie Muster List; przy nieaktualnych zameldowaniach liczby będą odbiegać.
 - Dziennik jest w pliku JSON na jednym serwerze; przy kilku instancjach potrzebny wspólny magazyn.
+
+## Czujki pożarowe (2026-11-19)
+
+Każda czujka ma swoje miejsce na modelu (`assistant/shared/sensors.ts`: 36 kabin, korytarze, restauracja, kuchnia, salony, mostek, maszynownia, ECR, pokłady samochodowe, klatki schodowe; 65 sztuk). Alarm pożarowy niesie listę czujek (`sensors`), a terminale pokazują je na ekranie alarmu, w panelu mostka i jako pulsujący znacznik na modelu 3D (Statek 3D i Ewakuacja; kamera sama podlatuje do czujki).
+
+- Mostek: w formularzu „Ogłoś alarm” przy pożarze można wybrać czujkę ze strefy.
+- Centrala pożarowa / czujka ESP32: `POST /api/alarms/sensor` `{ "sensor": "C104", "drill": true }`, nagłówek `x-sensor-key` (`SENSOR_KEY`, a bez niego `TERMINAL_KEY` albo `BAND_KEY`; bez żadnego klucza tylko z localhost). Gdy trwa alarm pożarowy, czujka dopisuje się do niego; inaczej powstaje nowy alarm pożarowy w strefie czujki.
+- Test: `npm run sensor -- C104` (ćwiczenie) albo `-- E-P1 --real`; zdalnie z `ASSISTANT_URL=https://jantar.byst.re SENSOR_KEY=...`.

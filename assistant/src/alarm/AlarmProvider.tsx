@@ -29,7 +29,7 @@ export interface TerminalIdentity {
   place?: string;
 }
 export type Conn = 'connecting' | 'online' | 'offline';
-export interface RaiseInput { kind: AlarmKind; zone: AlarmZone | null; blocked: BlockedStair | null; message: string; drill: boolean; confirm?: boolean }
+export interface RaiseInput { kind: AlarmKind; zone: AlarmZone | null; blocked: BlockedStair | null; message: string; drill: boolean; confirm?: boolean; sensors?: string[] }
 
 interface Ctx {
   conn: Conn;
@@ -57,6 +57,8 @@ interface Ctx {
 }
 const AlarmContext = createContext<Ctx | null>(null);
 
+/** null outside <AlarmProvider> (components that also render without the alarm system) */
+export function useAlarmsOptional(): Ctx | null { return useContext(AlarmContext); }
 export function useAlarms(): Ctx {
   const c = useContext(AlarmContext);
   if (!c) throw new Error('useAlarms() outside <AlarmProvider>');

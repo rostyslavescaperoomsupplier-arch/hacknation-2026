@@ -73,6 +73,8 @@ export interface Alarm {
   /** 'ended' by the bridge or 'replaced' by a newer alarm */
   endReason?: 'ended' | 'replaced';
   acks: Record<string, AlarmAck>;
+  /** fire detectors that went off (shared/sensors.ts ids), newest last; absent on older alarms */
+  sensors?: string[];
 }
 
 export interface TerminalInfo {
@@ -120,7 +122,7 @@ export interface AlarmState {
 // ---------- wire protocol (JSON text frames on /api/alarms/ws) ----------
 export type ClientMsg =
   | { type: 'hello'; terminalId: string; name: string; role: TerminalRole; zone?: TerminalZone | null; place?: string | null }
-  | { type: 'raise'; kind: AlarmKind; zone: AlarmZone | null; blocked: BlockedStair | null; message: string; drill: boolean; confirm?: boolean }
+  | { type: 'raise'; kind: AlarmKind; zone: AlarmZone | null; blocked: BlockedStair | null; message: string; drill: boolean; confirm?: boolean; sensors?: string[] }
   | { type: 'ack'; alarmId: string; user?: string; headcount?: number }
   | { type: 'end'; alarmId: string }
   | { type: 'ping' };

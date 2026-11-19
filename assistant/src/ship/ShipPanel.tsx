@@ -12,6 +12,9 @@ import { CrewDetail, CrewLegend, CrewList, CrewMarkers, EvacCrew, type CrewSel }
 import { routeZoneOf, useBands, type BandPerson } from './bands';
 import { BandDots, BandsPanel } from './BandsLayer';
 import { useAuth } from '../auth';
+import { useAlarmsOptional } from '../alarm/AlarmProvider';
+import '../alarm/alarm.css';
+import { SENSOR, sensorLabel, type Sensor } from '../../shared/sensors';
 
 export interface ShipPanelProps {
   lang: Lang;
@@ -128,6 +131,36 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
     if (st) { const b = st.getBoundingClientRect(); if (b.bottom < 80 || b.top > innerHeight - 80) st.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' }); }
   };
   const bandsAlarm = bands.status === 'ok' && !!bands.state?.alarm;
+  // ---- fire detectors that went off (active fire alarm) ----
+  const alarmCtx = useAlarmsOptional();
+  const fireAlarm = alarmCtx?.active?.kind === 'fire' ? alarmCtx.active : null;
+  const sensorKey = (fireAlarm?.sensors ?? []).join(',');
+  const fireSensors: Sensor[] = useMemo(() => sensorKey.split(',').map((id) => SENSOR[id]).filter(Boolean), [sensorKey]);
+  const showSensor = (s: Sensor) => {
+    setModel('full');
+    viewRef.current?.frameBox({ min: [s.at[0] - 9, s.at[1] - 5, s.at[2] - 9], max: [s.at[0] + 9, s.at[1] + 2, s.at[2] + 9] });
+  };
+  // a detector goes off while the view is on screen: fly to it once
+  useEffect(() => {
+    viewRef.current?.refreshAnchors();
+    // after the model has loaded (loading fits the camera to the whole ship and would undo the fly-to)
+    if (fireSensors.length && onScreen && progress === null) { const t = setTimeout(() => showSensor(fireSensors[fireSensors.length - 1]), 600); return () => clearTimeout(t); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sensorKey, progress === null, onScreen]);
+  const sensorCard = fireSensors.length > 0 && (
+    <section aria-label={L(lang, 'Czujki pożarowe', 'Fire detectors')} className="flex flex-col gap-2 rounded-card border-2 border-danger px-3 py-2">
+      <p className="font-semibold text-danger">{L(lang, 'Pożar: zadziałała czujka', 'Fire: detector triggered')}</p>
+      {fireSensors.map((s) => (
+        <div key={s.id} className="flex items-center gap-2 text-sm">
+          <span aria-hidden="true" className="sensor-dot" />
+          <span className="min-w-0 flex-1"><b>{s.id}</b> · {sensorLabel(s, lang)}</span>
+          <button type="button" onClick={() => showSensor(s)} className="tap shrink-0 rounded-card border border-line px-2 text-xs font-semibold hover:border-ink-2">
+            {L(lang, 'Pokaż na modelu', 'Show on model')}
+          </button>
+        </div>
+      ))}
+    </section>
+  );
   useEffect(() => { viewRef.current?.refreshAnchors(); }, [bands]);
   const crewSelId = useId();
   const crewSelLabel = !crewSel ? '' : crewSel.kind === 'room'
@@ -315,6 +348,15 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
           <div ref={hostRef} className="ship-gl absolute inset-0" aria-hidden="true" />
           <CrewMarkers ref={markerRef} lang={lang} data={crew} show={showCrew && !glFail} sel={crewSel} hl={crewHl} onSelect={pickCrew}>
             {evac && !glFail && <BandDots lang={lang} data={bands} sel={bandSel} onSelect={pickBand} />}
+            {!glFail && fireSensors.map((s) => (
+              <button key={s.id} type="button" tabIndex={-1} data-at={s.at.join(',')} onClick={() => showSensor(s)}
+                      className="pointer-events-auto absolute left-0 top-0 z-40 flex items-center gap-1.5">
+                <span aria-hidden="true" className="sensor-dot" style={{ width: 16, height: 16, border: '2px solid #fff' }} />
+                <span className="whitespace-nowrap rounded-[3px] bg-danger px-1.5 py-0.5 text-left text-[11px] font-semibold leading-tight text-on-strong shadow-sm">
+                  {L(lang, 'Czujka', 'Detector')} {s.id}<span className="block font-normal">{s.name[lang === 'pl' ? 'pl' : 'en']}</span>
+                </span>
+              </button>
+            ))}
           </CrewMarkers>
           {showCrew && !glFail && <CrewLegend lang={lang} data={crew} />}
           {glFail && (
@@ -354,6 +396,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
       </div>
 
       <aside className={`panel flex min-w-0 flex-col gap-4 p-4 lg:order-none lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start ${evac ? 'order-2' : 'order-3'}`}>
+        {sensorCard}
         {mode === 'evac' ? (
           <>
             {bandsAlarm && <BandsPanel lang={lang} data={bands} sel={bandSel} onSelect={pickBand} onLogin={() => openLogin('manual')} />}

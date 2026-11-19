@@ -40,6 +40,7 @@ import { clientIp, corsOrigin, originAllowed, tokenOk } from './guard.ts';
 import { crewEnabled, crewGet } from './crew.ts';
 import { attachAuth, getSession, hasRole, type Session } from './auth.ts';
 import { CREW_ROOM_PLACES } from '../shared/crew-map.ts';
+import { SENSOR, SENSORS_MAX, isSensorId } from '../shared/sensors.ts';
 import {
   ALARM_ZONES, HEADCOUNT_MAX, MESSAGE_MAX, NAME_MAX, PLACE_RE, TERMINAL_ID_RE, USER_MAX,
   isAlarmKind, isAlarmZone, isStair, isTerminalZone, musterFor,
@@ -101,7 +102,8 @@ let muster: Muster | null = null;
 // ---------- persistence ----------
 function validStored(a: any): a is Alarm {
   return a && typeof a === 'object' && typeof a.id === 'string' && isAlarmKind(a.kind) && typeof a.at === 'string'
-    && typeof a.drill === 'boolean' && a.acks && typeof a.acks === 'object' && (a.zone === null || isAlarmZone(a.zone));
+    && typeof a.drill === 'boolean' && a.acks && typeof a.acks === 'object' && (a.zone === null || isAlarmZone(a.zone))
+    && (a.sensors === undefined || (Array.isArray(a.sensors) && a.sensors.every(isSensorId)));
 }
 function load() {
   try {
@@ -132,6 +134,37 @@ function scheduleSave() {
 export function flushAlarms() { if (saveTimer) writeNow(); }
 /** the alarm in force right now (null: none); read-only view for server/positions.ts */
 export function activeAlarm(): Alarm | null { return active; }
+
+/** A fire detector went off (POST /api/alarms/sensor from the fire panel / an ESP32 detector, or a test script).
+ *  An active fire alarm gets the detector added to it; otherwise a new fire alarm is raised in the detector's zone. */
+export function sensorTriggered(id: string, drill: boolean): { alarm: Alarm; created: boolean } {
+  const s = SENSOR[id];
+  const now = new Date().toISOString();
+  if (active && active.kind === 'fire') {
+    const list = active.sensors ?? [];
+    if (!list.includes(id) && list.length < SENSORS_MAX) active.sensors = [...list, id];
+    if (!active.zone && isAlarmZone(s.zone)) active.zone = s.zone;
+    scheduleSave();
+    console.log(`[alarms] SENSOR ${id} added to the active fire alarm`);
+    broadcast('raised');
+    return { alarm: active, created: false };
+  }
+  if (active) { active.endedAt = now; active.endedBy = `Czujka ${id}`; active.endReason = 'replaced'; }
+  const alarm: Alarm = {
+    id: randomUUID(), kind: 'fire', zone: isAlarmZone(s.zone) ? s.zone : null, blocked: null,
+    message: `Zadziałała ${s.type === 'smoke' ? 'czujka dymu' : s.type === 'heat' ? 'czujka ciepła' : 'czujka płomienia'}: ${s.name.pl} (${id}).`,
+    drill, raisedBy: `Centrala pożarowa (czujka ${id})`, raisedById: 'fire-panel', at: now, endedAt: null, acks: {}, sensors: [id],
+  };
+  active = alarm;
+  log.unshift(alarm);
+  if (log.length > LOG_CAP) log.length = LOG_CAP;
+  scheduleSave();
+  console.log(`[alarms] RAISE ${drill ? 'drill' : 'REAL'} fire from SENSOR ${id} zone=${alarm.zone ?? '-'}`);
+  void refreshMuster('raised');
+  return { alarm, created: true };
+}
+const SENSOR_KEY = (process.env.SENSOR_KEY || process.env.TERMINAL_KEY || process.env.BAND_KEY || '').trim();
+const sensorBuckets = new Map<string, Bucket>();
 process.once('beforeExit', flushAlarms);
 
 // ---------- helpers ----------
@@ -300,6 +333,8 @@ function raise(c: Conn, d: Payload) {
       !(d.zone == null || isAlarmZone(d.zone)) || !(d.blocked == null || isStair(d.blocked)))
     return error(c, 'invalid', 'raise needs kind, drill (boolean), zone|null, blocked|null, message.');
   if (len(message) > MESSAGE_MAX) return error(c, 'too-long', `Message longer than ${MESSAGE_MAX} characters.`);
+  if (d.sensors != null && (!Array.isArray(d.sensors) || d.sensors.length > SENSORS_MAX || !d.sensors.every(isSensorId)))
+    return error(c, 'invalid', 'sensors: a list of known detector ids.');
   if (!d.drill && d.confirm !== true) return error(c, 'confirm', 'A real alarm needs confirm: true.');
   const now = new Date().toISOString();
   if (active) {
@@ -307,8 +342,12 @@ function raise(c: Conn, d: Payload) {
     active.endedBy = `${who(s)} (${t.name})`;
     active.endReason = 'replaced';
   }
+  const sensors = Array.isArray(d.sensors) && d.sensors.length ? [...new Set(d.sensors as string[])] : undefined;
+  // no zone given: the first detector's zone (stairwells have none of their own)
+  const sensorZone = sensors?.map((id) => SENSOR[id].zone).find((z) => isAlarmZone(z)) ?? null;
   const alarm: Alarm = {
-    id: randomUUID(), kind: d.kind, zone: (d.zone as Alarm['zone']) ?? null, blocked: (d.blocked as Alarm['blocked']) ?? null,
+    ...(sensors ? { sensors } : {}),
+    id: randomUUID(), kind: d.kind, zone: (d.zone as Alarm['zone']) ?? (sensorZone as Alarm['zone']), blocked: (d.blocked as Alarm['blocked']) ?? null,
     message, drill: d.drill, raisedBy: `${who(s)} (${t.name})`, raisedById: t.terminalId, at: now, endedAt: null,
     // the bridge terminal that raised it has seen it: acknowledged at once (reaction time 0)
     acks: { [t.terminalId]: { at: now, name: t.name, zone: t.zone, user: whoShort(s) } },
@@ -523,6 +562,32 @@ export async function handleAlarmHttp(req: IncomingMessage, res: ServerResponse)
   const p = u.pathname;
   if (p !== '/api/alarms' && !p.startsWith('/api/alarms/')) return false;
   if (p === WS_PATH) { sendJson(res, 426, { error: 'websocket only' }, { upgrade: 'websocket' }); return true; }
+  if (p === '/api/alarms/sensor') {
+    // fire panel / ESP32 detector: { sensor: "C104", drill?: boolean }, header x-sensor-key (SENSOR_KEY, else
+    // TERMINAL_KEY / BAND_KEY); without any key only loopback callers (test script on the server itself)
+    if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }, { allow: 'POST' }); return true; }
+    const loop = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '') && !req.headers['x-forwarded-for'];
+    if (SENSOR_KEY ? req.headers['x-sensor-key'] !== SENSOR_KEY : !loop) { sendJson(res, 403, { error: 'forbidden' }); return true; }
+    const ip = clientIp(req);
+    let sb = sensorBuckets.get(ip);
+    if (!sb) { if (sensorBuckets.size > 1000) sensorBuckets.clear(); sensorBuckets.set(ip, sb = { tokens: 30, last: Date.now() }); }
+    if (!take(sb, { cap: 30, perSec: 0.5 })) { sendJson(res, 429, { error: 'rate limited' }); return true; }
+    const raw = await new Promise<string | null>((resolve) => {
+      let d = ''; let over = false;
+      req.setEncoding('utf8');
+      req.on('data', (c: string) => { if (over) return; d += c; if (d.length > 1024) { over = true; d = ''; } });
+      req.on('end', () => resolve(over ? null : d));
+      req.on('error', () => resolve(null));
+    });
+    let body: any = null;
+    try { body = raw ? JSON.parse(raw) : null; } catch { /* below */ }
+    if (!body || !isSensorId(body.sensor) || !(body.drill === undefined || typeof body.drill === 'boolean')) {
+      sendJson(res, 400, { error: 'body: { sensor: known detector id, drill?: boolean }' }); return true;
+    }
+    const r = sensorTriggered(body.sensor, body.drill === true);
+    sendJson(res, 200, { ok: true, created: r.created, alarmId: r.alarm.id, zone: r.alarm.zone, sensors: r.alarm.sensors });
+    return true;
+  }
   const cors = corsOrigin(req);
   if (cors) { res.setHeader('access-control-allow-origin', cors); res.setHeader('vary', 'origin'); }
   if (req.method === 'OPTIONS') {
