@@ -16,6 +16,7 @@ import type { DrillId } from './drills/data';
 // System anty-rzyg: kropki ruchu przy krawędziach ekranu przeciw chorobie morskiej (jak Vehicle Motion Cues w iOS).
 // Zawsze włączony na każdej karcie, bez wyłącznika; sam dobiera intensywność do ruchu statku. Szczegóły: src/motion-cues/.
 import MotionCues from './motion-cues/MotionCues';
+import MotionBadge from './motion-cues/MotionBadge';
 import CrewVideoChat from './crew/CrewVideoChat';
 // Ship alarm system (docs/ALARMS.md): provider = live connection, overlay = full-screen alarm + post-ack banner.
 import { AlarmProvider, AlarmOverlay } from './alarm';
@@ -222,6 +223,7 @@ function Shell({ initialLang }: { initialLang: Lang }) {
 
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <UserChip lang={lang} />
+            <MotionBadge lang={lang} />
             <button type="button" aria-pressed={theme === 'night'} onClick={toggleNight} title={s.night}
                     aria-label={s.night}
                     className="hdr-btn tap inline-flex items-center justify-center gap-2 rounded-card border border-line bg-paper px-2.5 text-sm font-semibold uppercase text-ink-2 hover:text-ink sm:px-3">

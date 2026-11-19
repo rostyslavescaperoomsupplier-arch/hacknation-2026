@@ -34,12 +34,12 @@ export const skalibruj = recalibrate;
 
 const BAND = 24;            // szerokość pasa przy krawędzi, CSS px - nic nie wychodzi dalej
 const DOT_X = 9;            // środek kolumny kropek od krawędzi
-const DOT_R = 3;            // promień kropki w spokoju
-const DOT_R_GAIN = 0.9;     // + przy pełnej energii
+const DOT_R = 3.6;          // promień kropki w spokoju
+const DOT_R_GAIN = 1.3;     // + przy pełnej energii
 const CROSS_MAX = BAND / 2 - DOT_R - DOT_R_GAIN - 1; // poprzeczne wychylenie, dalej w pasie
-const TICK_LEN = 18;        // długość kreski horyzontu
-const ALPHA_REST = 0.14;
-const ALPHA_MAX = 0.4;
+const TICK_LEN = 22;        // długość kreski horyzontu (mieści się w pasie)
+const ALPHA_REST = 0.3;     // wyraźnie widać także w spokoju (było 0.14: ludzie nie zauważali)
+const ALPHA_MAX = 0.7;
 const PX_PER_DEG_ROLL = 7;  // 5 st. przechyłu = 35 px, wyraźnie widać
 const PX_PER_DEG_PITCH = 6;
 const PX_PER_M_HEAVE = 22;  // nurzanie +-0.6 m = ~13 px
@@ -49,6 +49,12 @@ const SLOW_FRAME_MS = 50;   // ~20 kl./s przy znikomym ruchu
 interface Dot { y: number; x: number; vy: number; vx: number; resp: number }
 interface Track { kind: 'col' | 'row'; side: -1 | 1; dots: Dot[] }
 
+function readTick(): string {
+  const cs = getComputedStyle(document.documentElement);
+  return document.documentElement.dataset.theme === 'night'
+    ? (cs.getPropertyValue('--motion-dot-color').trim() || '#c62828')
+    : (cs.getPropertyValue('--c-gold').trim() || '#e8590c');
+}
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const wrap = (v: number, m: number) => ((v % m) + m) % m;
 
@@ -98,6 +104,7 @@ export default function MotionCues({ lang = 'pl' }: { lang?: Lang } = {}) {
     let tracks: Track[] = [];
     let dense = false;          // gęstsze kropki przy silnym morzu
     let color = readColor();
+    let tickColor = readTick();
     let colorAt = 0;
     const rmq = matchMedia('(prefers-reduced-motion: reduce)');
     let reduced = rmq.matches;
@@ -154,7 +161,7 @@ export default function MotionCues({ lang = 'pl' }: { lang?: Lang } = {}) {
       const dt = last ? clamp((ts - last) / 1000, 0.001, 0.08) : 0.016;
       last = ts; lastDraw = ts;
 
-      if (ts - colorAt > 1000) { color = readColor(); colorAt = ts; }
+      if (ts - colorAt > 1000) { color = readColor(); tickColor = readTick(); colorAt = ts; }
       energy += (sea.energy - energy) * (1 - Math.exp(-dt / 1.5));
       // gęstość z histerezą: włącz przy silnym morzu, wyłącz dopiero przy umiarkowanym/niższym
       const wantDense = dense ? sea.index > 3.4 : sea.level === 'silnie';
@@ -221,13 +228,15 @@ export default function MotionCues({ lang = 'pl' }: { lang?: Lang } = {}) {
       // przesunięte razem z pochyleniem / nurzaniem; kąt wierny (5 st. = 5 st.)
       [horizon.y, horizon.vy] = spring(horizon.y, horizon.vy, clamp(commonPx * amp, -MAX_OFFSET, MAX_OFFSET), 0.5 * slow, dt);
       [horizon.a, horizon.va] = spring(horizon.a, horizon.va, -m.roll * amp * Math.PI / 180, 0.5 * slow, dt);
-      const tickAlpha = Math.min(0.8, alpha + 0.2 + 0.35 * calFlash);
+      const tickAlpha = Math.min(0.95, alpha + 0.3 + 0.35 * calFlash);
       const hy = H / 2 + horizon.y;
       const ca = Math.cos(horizon.a), sa = Math.sin(horizon.a);
       const rollSprPx = -horizon.a * (180 / Math.PI) * PX_PER_DEG_ROLL; // ten sam przechył co kąt kreski
       const half = TICK_LEN / 2;
       ctx!.globalAlpha = tickAlpha;
-      ctx!.lineWidth = 2;
+      // horyzont w kolorze ostrzegawczym (pomarańcz; w nocy czerwień z --motion-dot-color), grubszy niż kropki
+      ctx!.strokeStyle = tickColor;
+      ctx!.lineWidth = 3.2;
       ctx!.lineCap = 'round';
       ctx!.beginPath();
       for (const side of [-1, 1] as const) {
@@ -249,7 +258,7 @@ export default function MotionCues({ lang = 'pl' }: { lang?: Lang } = {}) {
     }
     const onVis = () => (document.hidden ? pause() : run());
     const onReduced = () => { reduced = rmq.matches; };
-    const refreshColor = () => { color = readColor(); };
+    const refreshColor = () => { color = readColor(); tickColor = readTick(); };
     // ukryty skrót "Skalibruj": Alt+Shift+K (tylko wycentrowanie, nic nie wyłącza)
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyK') recalibrate();

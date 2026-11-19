@@ -218,6 +218,10 @@ export function startMotion(): () => void {
   };
 }
 
+let lastOut: MotionSample = { roll: 0, pitch: 0, heave: 0, heaveAcc: 0, source: 'sim' };
+/** Ostatnia próbka bez liczenia nowej (dla wskaźnika w nagłówku; readMotion woła tylko nakładka). */
+export function peekMotion(): MotionSample { return lastOut; }
+
 /** Bieżący ruch w układzie ekranu. Wołać raz na klatkę (także przy klatkach co 50 ms). */
 export function readMotion(): MotionSample {
   const t = now();
@@ -273,5 +277,6 @@ export function readMotion(): MotionSample {
   dbg.energy = Math.round(sea.energy * 100) / 100;
   dbg.level = sea.level;
   dbg.source = source;
+  lastOut = out;
   return out;
 }
