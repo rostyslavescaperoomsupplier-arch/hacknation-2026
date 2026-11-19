@@ -21,6 +21,7 @@ import { clientIp, corsOrigin, originAllowed, takeToken, tokenOk, validateChat, 
 import { CONFIGURED, FAKE, MODEL, ask, askStream, describeError, knowledgeStats } from './claude.ts';
 import { CREW_API, crewEnabled, handleCrewProxy } from './crew.ts';
 import { attachCrewVideoWebSocket } from './crew-video.ts';
+import { attachAlarms, handleAlarmHttp } from './alarms.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -174,6 +175,7 @@ const server = createServer({ connectionsCheckingInterval: 2_000 }, async (req, 
       return url === '/api/chat' ? await chat(req, res, t0) : await chatStream(req, res, t0);
     }
     if (await handleCrewProxy(req, res)) return;
+    if (await handleAlarmHttp(req, res)) return;
     if (url.startsWith('/api/')) return send(res, 404, { error: 'not found' });
     serveStatic(req, res);
   } catch (e) {
@@ -183,6 +185,8 @@ const server = createServer({ connectionsCheckingInterval: 2_000 }, async (req, 
 });
 // crew video chat between terminals (signalling WebSocket at /crew-video-ws, from branch videochat)
 attachCrewVideoWebSocket(server);
+// ship alarm system (centrala): WebSocket /api/alarms/ws, GET /api/alarms/state|log
+attachAlarms(server);
 // Only bound the time to RECEIVE a request (slow / unfinished bodies); a long SSE response is not affected.
 server.requestTimeout = REQUEST_TIMEOUT_MS;
 server.headersTimeout = HEADERS_TIMEOUT_MS;
