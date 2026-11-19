@@ -1,0 +1,103 @@
+import type { Lang } from './types';
+
+// Contact shown when the assistant cannot help. Replace with the real one for the chosen task.
+export const CONTACT = { tel: '+48000000000', telLabel: '+48 000 000 000', mail: 'kontakt@example.org' };
+
+const pl = {
+  title: 'Mewka, asystentka',
+  hello: 'Cześć! Jestem Mewka. Nie jestem człowiekiem, ale chętnie pomogę. Zapytaj o cokolwiek, możemy też porozmawiać głosem.',
+  log_label: 'Rozmowa z asystentką',
+  input_label: 'Twoje pytanie',
+  placeholder: 'Napisz pytanie…',
+  send: 'Wyślij',
+  suggestions: 'Przykładowe pytania',
+  sugg: ['Co potrafisz?', 'Jak mogę z Tobą rozmawiać głosem?', 'Opowiedz o sobie'],
+  you: 'Ty',
+  bot: 'Mewka',
+  thinking: 'Mewka myśli…',
+  source: 'Źródło',
+  sources: 'Źródła',
+  clear: 'Wyczyść rozmowę',
+  call: 'Zadzwoń',
+  write: 'Napisz e-mail',
+  rodo_title: 'Prywatność',
+  rodo: 'Nie podawaj danych osobowych. Pytania trafiają do serwera asystenta i modelu AI tylko po to, żeby odpowiedzieć. Rozmowa znika po odświeżeniu strony.',
+  rodo_short: 'Nie podawaj danych osobowych.',
+  ai_badge: 'Asystent AI',
+  offline: 'Nie mogę teraz połączyć się z serwerem asystenta. Spróbuj za chwilę albo skontaktuj się z nami bezpośrednio.',
+};
+type Dict = typeof pl;
+
+const en: Dict = {
+  title: 'Mewka, the assistant',
+  hello: "Hi! I'm Mewka. I'm not a human, but I'm happy to help. Ask me anything, and we can also talk by voice.",
+  log_label: 'Conversation with the assistant',
+  input_label: 'Your question',
+  placeholder: 'Type a question…',
+  send: 'Send',
+  suggestions: 'Example questions',
+  sugg: ['What can you do?', 'How do I talk to you by voice?', 'Tell me about yourself'],
+  you: 'You',
+  bot: 'Mewka',
+  thinking: 'Mewka is thinking…',
+  source: 'Source',
+  sources: 'Sources',
+  clear: 'Clear conversation',
+  call: 'Call',
+  write: 'Send an e-mail',
+  rodo_title: 'Privacy',
+  rodo: 'Please do not share personal data. Questions go to the assistant server and an AI model only to answer them. The conversation disappears when you reload the page.',
+  rodo_short: 'Please do not share personal data.',
+  ai_badge: 'AI assistant',
+  offline: "I can't reach the assistant server right now. Try again in a moment or contact us directly.",
+};
+
+const de: Dict = {
+  title: 'Mewka, die Assistentin',
+  hello: 'Hallo! Ich bin Mewka. Ich bin kein Mensch, helfe aber gern. Fragen Sie mich alles, wir können auch per Stimme sprechen.',
+  log_label: 'Gespräch mit der Assistentin',
+  input_label: 'Ihre Frage',
+  placeholder: 'Frage eingeben…',
+  send: 'Senden',
+  suggestions: 'Beispielfragen',
+  sugg: ['Was kannst du?', 'Wie spreche ich mit dir per Stimme?', 'Erzähl von dir'],
+  you: 'Sie',
+  bot: 'Mewka',
+  thinking: 'Mewka denkt nach…',
+  source: 'Quelle',
+  sources: 'Quellen',
+  clear: 'Gespräch löschen',
+  call: 'Anrufen',
+  write: 'E-Mail schreiben',
+  rodo_title: 'Datenschutz',
+  rodo: 'Bitte keine personenbezogenen Daten angeben. Fragen gehen nur zur Beantwortung an den Assistenz-Server und ein KI-Modell. Das Gespräch verschwindet beim Neuladen.',
+  rodo_short: 'Bitte keine personenbezogenen Daten angeben.',
+  ai_badge: 'KI-Assistentin',
+  offline: 'Der Assistenz-Server ist gerade nicht erreichbar. Versuchen Sie es gleich noch einmal oder kontaktieren Sie uns direkt.',
+};
+
+const uk: Dict = {
+  title: 'Мевка, асистентка',
+  hello: 'Привіт! Я Мевка. Я не людина, але охоче допоможу. Питай про що завгодно, можемо й поговорити голосом.',
+  log_label: 'Розмова з асистенткою',
+  input_label: 'Твоє запитання',
+  placeholder: 'Напиши запитання…',
+  send: 'Надіслати',
+  suggestions: 'Приклади запитань',
+  sugg: ['Що ти вмієш?', 'Як говорити з тобою голосом?', 'Розкажи про себе'],
+  you: 'Ти',
+  bot: 'Мевка',
+  thinking: 'Мевка думає…',
+  source: 'Джерело',
+  sources: 'Джерела',
+  clear: 'Очистити розмову',
+  call: 'Зателефонувати',
+  write: 'Написати листа',
+  rodo_title: 'Приватність',
+  rodo: 'Не називай персональних даних. Запитання надходять на сервер асистента та до моделі ШІ лише для відповіді. Розмова зникає після оновлення сторінки.',
+  rodo_short: 'Не називай персональних даних.',
+  ai_badge: 'ШІ-асистентка',
+  offline: 'Зараз не можу зʼєднатися із сервером асистента. Спробуй за хвилину або звʼяжися з нами напряму.',
+};
+
+export const STR: Record<Lang, Dict> = { pl, en, de, uk };
