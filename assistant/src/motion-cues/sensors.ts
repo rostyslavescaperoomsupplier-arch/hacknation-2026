@@ -2,7 +2,7 @@
 //
 // Kolejność źródeł (najlepsze wygrywa):
 //   1. 'sensor' - żyroskop + akcelerometr urządzenia (telefon, tablet), fuzja filtrem komplementarnym
-//      (filters.ts: fuseUp), potem pasmo statku 0.03-0.7 Hz. Gdy przeglądarka daje tylko
+//      (filters.ts: fuseUp), potem pasmo statku 0.02-0.7 Hz. Gdy przeglądarka daje tylko
 //      deviceorientation, wektor "w górę" liczymy z kątów beta/gamma i dalej tak samo.
 //   2. 'ship'   - ruch podany z zewnątrz przez setShipMotion() (np. przyszły serwer centralny statku);
 //      też przepuszczany przez pasmo statku (stały przechył od ładunku nie jest kołysaniem).

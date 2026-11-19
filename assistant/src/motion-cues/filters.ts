@@ -3,7 +3,7 @@
 // Podstawa: choroba morska to konflikt sensoryczny - błędnik czuje ruch statku, oczy widzą nieruchomy
 // ekran. Najbardziej mdlący jest ruch wolny, ok. 0.1-0.3 Hz (kołysanie boczne / wzdłużne / nurzanie
 // promu, okresy 4-12 s). Dlatego sygnał ograniczamy do tego pasma:
-//   - górnoprzepustowy ~0.03 Hz usuwa linię bazową: kąt, pod którym ktoś trzyma tablet, albo
+//   - górnoprzepustowy ~0.02 Hz usuwa linię bazową: kąt, pod którym ktoś trzyma tablet, albo
 //     pochylony montaż terminala; filtr 2. rzędu usuwa też powolne "dryfowanie" (rampę) do zera;
 //   - dolnoprzepustowy ~0.7 Hz usuwa drżenie ręki i drgania maszynowni (>1 Hz).
 // Fazy obu filtrów przy 0.15 Hz prawie się znoszą (+16 i -18 stopni), więc kropki nie spóźniają się
@@ -135,9 +135,9 @@ export class TiltPipeline {
   private bigFor = 0;
   out: TiltOut = { roll: 0, pitch: 0, heaveAcc: 0, rawRoll: 0, rawPitch: 0 };
 
-  static readonly LEARN_S = 30;
-  static readonly HP_LEARN_HZ = 0.12;
-  static readonly HP_HZ = 0.03;
+  static readonly LEARN_S = 10;
+  static readonly HP_LEARN_HZ = 0.06;
+  static readonly HP_HZ = 0.02; // ~8 s: a held tilt stays visible longer than before (0.03), ship roll (7-12 s period) passes
 
   /** ponowne wycentrowanie: aktualna pozycja staje się nową linią bazową, nauka od zera */
   recenter(): void { this.primed = false; }
@@ -157,7 +157,7 @@ export class TiltPipeline {
       this.roll.prime(t.roll); this.pitch.prime(rawPitch); this.heave.prime(vert);
       this.primed = true; this.sinceCal = 0; this.bigFor = 0;
     }
-    // nauka montażu: górnoprzepustowy startuje szybki (0.12 Hz) i przez 30 s zwalnia do 0.03 Hz
+    // nauka montażu: górnoprzepustowy startuje szybszy (0.06 Hz) i przez 10 s zwalnia do 0.02 Hz
     this.sinceCal += dt;
     const p = clamp(this.sinceCal / TiltPipeline.LEARN_S, 0, 1);
     const hpHz = TiltPipeline.HP_LEARN_HZ + (TiltPipeline.HP_HZ - TiltPipeline.HP_LEARN_HZ) * p;
@@ -166,9 +166,10 @@ export class TiltPipeline {
     const r = this.roll.step(t.roll, dt);
     const q = this.pitch.step(rawPitch, dt);
     const h = this.heave.step(vert, dt);
-    // ponad 20 st. przez 2 s to nie fala, tylko zmiana chwytu / położenia: samo-wycentrowanie
-    this.bigFor = Math.abs(r) > 20 || Math.abs(q) > 20 ? this.bigFor + dt : 0;
-    if (this.bigFor > 2) this.recenter();
+    // ponad 45 st. przez 6 s to nie fala, tylko odłożenie / obrócenie urządzenia: samo-wycentrowanie
+    // (wcześniej 20 st. / 2 s - system 'sam się ustawiał' przy zwykłym przechyleniu ręką)
+    this.bigFor = Math.abs(r) > 45 || Math.abs(q) > 45 ? this.bigFor + dt : 0;
+    if (this.bigFor > 6) this.recenter();
 
     this.out.roll = r; this.out.pitch = q; this.out.heaveAcc = h;
     this.out.rawRoll = t.roll; this.out.rawPitch = rawPitch;
