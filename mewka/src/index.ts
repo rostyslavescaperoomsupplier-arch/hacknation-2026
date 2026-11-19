@@ -5,7 +5,7 @@ import './mewka/mewka.css';
 
 export { MEWKA_SVG, createMewka };
 export type { MewkaApi, MewkaState };
-export { ITEMS, itemById, type Outfit, type Slot, type Item } from './mewka/outfit';
+export type { Outfit, Slot } from './mewka/outfit';
 export { playGull, MEWKA as MEWKA_VOICE, LENGTH as GULL_LENGTH, type GullSound } from './audio/gull-synth';
 
 export type MewkaSize = 'sm' | 'md' | 'lg' | 'xl';
