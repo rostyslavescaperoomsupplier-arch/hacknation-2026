@@ -18,12 +18,14 @@ curl https://jantar.byst.re/api/health
 ```
 
 ```json
-{ "ok": true, "model": "claude-opus-5-5", "configured": true, "knowledge": { "files": 2, "chars": 18450 }, "uptime": 3621 }
+{ "ok": true, "model": "claude-opus-5-5", "engine": "claude", "configured": true, "knowledge": { "files": 2, "chars": 18450 }, "uptime": 3621 }
 ```
 
 `knowledge.files` to liczba dokumentów w `server/knowledge/`, `uptime` w sekundach. Health nie wymaga tokenu ani limitów.
 `configured: false` znaczy, że na serwerze nie ma danych logowania Anthropic (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
 ani `ANTHROPIC_PROFILE`, i nie działa `ASSISTANT_FAKE=1`); wtedy czat od razu odpowiada 503 (niżej), a reszta aplikacji działa.
+`engine` mówi, kto odpowiada na `/api/chat*`: `"claude"` albo `"local"` (silnik lokalny, wtedy też `model: "local"`), patrz
+[Tryb lokalny](#tryb-lokalny-bez-llm). Front sprawdza to pole, żeby wybrać, gdzie liczyć odpowiedź.
 
 ### `POST /api/chat` (JSON, cała odpowiedź naraz)
 
@@ -123,7 +125,7 @@ Pełniejszy parser SSE: `assistant/tests/sse.ts`.
 | 405 | `{ "error": "POST only" }` | zła metoda na `/api/chat*` |
 | 429 | `{ "error": "rate limited" }` + nagłówek `retry-after` (sekundy) | przekroczony limit |
 | 502 | `{ "error": "assistant unavailable" }` | błąd Claude (np. zły klucz) |
-| 503 | `{ "error": "assistant not configured" }` | brak klucza na serwerze (`/api/health` -> `configured: false`); bez wywołania API i bez zużycia limitu. Stream: status 503, `content-type: text/event-stream` i jedno `event: error` z tym błędem. Front pokazuje "Asystent nie jest jeszcze skonfigurowany na serwerze (brak klucza API). Pozostałe zakładki działają." bez przycisków kontaktu |
+| 503 | `{ "error": "assistant not configured" }` | brak klucza na serwerze (`/api/health` -> `configured: false`); bez wywołania API i bez zużycia limitu. Stream: status 503, `content-type: text/event-stream` i jedno `event: error` z tym błędem. Front tego komunikatu już nie pokazuje: odpowiada wtedy silnikiem lokalnym w przeglądarce (tryb lokalny niżej) |
 
 W `/api/chat/stream` błędy przed startem strumienia (400/403/429) przychodzą jako zwykły JSON z tym statusem (503 "not configured" jako SSE, patrz wyżej);
 błąd Claude w trakcie strumienia to `event: error` (status już 200). Serwer nigdy nie zwraca stack trace'ów.
@@ -272,6 +274,47 @@ Mewka podaje imiona, stopnie i miejsca, mówi ile minut / godzin temu był check
 - Sprawdź po restarcie: `curl 127.0.0.1:8787/api/health` -> `knowledge.files` powinno wzrosnąć.
 - Dokumenty są w każdym zapytaniu (cache'owane), więc trzymaj je zwięzłe; duże PDF-y podnoszą koszt i czas odpowiedzi.
 - Nie wrzucaj danych osobowych załogi.
+
+## Tryb lokalny (bez LLM)
+
+Mewka odpowiada też bez żadnego płatnego API: deterministyczny silnik (wyszukiwanie po słowach kluczowych + szablony,
+jak tryb lokalny asystenta Filharmonii). Kod: `assistant/src/local/` (czysty TS, bez zależności), ten sam w przeglądarce
+i na serwerze.
+
+- `text.ts`: normalizacja (małe litery, bez polskich znaków, `ł` -> `l`), tokeny, rdzenie przez prefiksy, literówki (Levenshtein, 1 błąd przy rdzeniach od 5 liter).
+- `engine.ts`: cechy pytania -> jedna intencja -> 1-4 krótkie akapity (czytane na głos) z tymi samymi markerami co Claude, parsowanymi przez `actions.ts` (te same reguły co `parseActions` w `server/claude.ts`, test pilnuje zgodności). Wynik ma kształt `/api/chat` + `engine: "local"`, a w `sources` jedno źródło "Tryb lokalny: karty ćwiczeń / trasy ewakuacji / baza załogi" (link do zakładki).
+- `crew.ts`: dane załogi. W przeglądarce przez proxy `/api/crew/*` (401 -> odpowiedź "Zaloguj się, żeby zobaczyć dane załogi.", bez przycisków kontaktu; 503 / brak sieci -> "Baza załogi jest teraz niedostępna" + kontakt z mostkiem); na serwerze przez narzędzia `runCrewTool`.
+- Wiedza: karty ćwiczeń `src/drills/data.ts`, trasy `src/ship/routes.ts` (`route()`), mapa pomieszczeń `shared/crew-map.ts`.
+
+Intencje (PL, EN; język z treści pytania, przy remisie język interfejsu):
+
+| Intencja | Przykład | Odpowiedź |
+|---|---|---|
+| `emergency` (fire, abandon, mob, flooding, pollution, blackout, medical, general) | "Pożar w kabinach na rufie" | 3-5 pierwszych działań z karty, sygnał, "obowiązują polecenia kapitana i Muster List", krótka trasa gdy padła strefa; `[[DRILL:id]]` + `[[ROUTE:strefa(:klatka)]]`. Przy pożarze "rufa / dziób" blokuje klatkę rufową / dziobową |
+| `route`, `muster` | "Droga ewakuacji z maszynowni", "Gdzie jest punkt zbiórki?" | kroki z `route()`, dystans i czas; `[[ROUTE:..]]` |
+| `signal`, `frequency`, `roles` | "Jaki jest sygnał alarmu ogólnego?", "Jak często ćwiczenia pożarowe?" | z karty ćwiczenia; `[[DRILL:..]]` |
+| `crew-where`, `crew-room`, `crew-summary`, `crew-alerts` | "Gdzie jest kapitan?", "Kto jest na mostku?", "Ile osób jest na pokładzie?", "Czy ktoś pracuje sam?" | imiona, stopnie, pomieszczenie, minuty od check-inu; `[[ROUTE:strefa]]` gdy jedno miejsce |
+| `help`, `voice`, `greeting`, `thanks`, `identity`, `equipment` | "Co potrafisz?", "Jak rozmawiać głosem?", "Gdzie jest gaśnica?" | stałe teksty (sprzętu nie zna: odsyła do planu statku + kontakt) |
+| `fallback` | cokolwiek innego | "Nie znam odpowiedzi w trybie lokalnym..." + 3 przykładowe pytania, `fallback: true` (kontakt) |
+
+Dopytania z historii (tylko tury użytkownika): "a jeśli schody rufowe są zablokowane?" (ta sama strefa / ćwiczenie, nowa
+zablokowana klatka), "a z salonu?" (ten sam scenariusz z innej strefy), "a jak brzmi sygnał?", "a starszy mechanik?",
+"a w maszynowni?".
+
+Gdzie liczy się odpowiedź:
+
+- Przeglądarka (`src/adapter.ts`), `VITE_ASSISTANT_MODE`: `auto` (domyślnie) pyta raz na minutę `GET /api/health` i używa
+  serwera tylko gdy `configured: true` i `engine` nie jest `"local"`; inaczej odpowiada lokalnie, od razu, offline (poza
+  pytaniami o załogę). Gdy serwer padnie / powie "not configured", odpowiada silnik lokalny. `local` nigdy nie woła
+  `/api/chat*`, `remote` zawsze. Odpowiedź lokalna przychodzi jako kilka `onDelta` (akapit po akapicie), więc animacje
+  Mewki i głos działają jak przy streamingu.
+- Serwer, `ASSISTANT_ENGINE`: `claude` (domyślnie; bez klucza 503 "assistant not configured" jak dotąd), `local` (zawsze
+  silnik lokalny, `server/local.ts`), `auto` (Claude gdy jest klucz albo `ASSISTANT_FAKE=1`, inaczej lokalny). Lokalnie
+  `/api/chat` i `/api/chat/stream` mają ten sam format (stream: `delta` na akapit, potem `done`), ten sam origin / token /
+  limit, odpowiedź ma `engine: "local"`.
+
+Testy: `node --experimental-strip-types --test tests/local.test.ts` (tabela 50+ pytań PL/EN, dopytania, fałszywe źródła
+załogi z 401 / 503, adapter bez serwera, serwer z `ASSISTANT_ENGINE=local` i `auto`).
 
 ## Uruchomienie lokalnie
 

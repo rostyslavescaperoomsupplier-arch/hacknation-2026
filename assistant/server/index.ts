@@ -1,17 +1,21 @@
 // Assistant server (Node http, run with `node --experimental-strip-types server/index.ts`).
-//   GET  /api/health       -> { ok, model, configured, knowledge: { files, chars }, uptime }
+//   GET  /api/health       -> { ok, model, engine: "claude" | "local", configured, knowledge: { files, chars }, uptime }
 //   POST /api/chat         { lang, messages: Turn[] } -> { text: string[], sources, fallback, actions }
 //   POST /api/chat/stream  same body -> Server-Sent Events: `delta` { text } (markers removed), then `done` (same shape as
 //                          /api/chat, authoritative) or `error` { error: "assistant unavailable" | "rate limited" | "bad request" }
 //   GET  /api/crew/{summary|rooms|rooms/:id|crew?q=|terminals|activity|alerts}
 //                          read-only proxy to the crew database (CREW_API), rooms/terminals + `place`; 503 when it is down (crew.ts)
 // Errors: 400 bad input, 403 bad origin / missing x-assistant-token, 429 rate limited (retry-after), 502 upstream failure,
-//         503 { error: "assistant not configured" } when no Anthropic credentials are set (stream: SSE `error` event).
+//         503 { error: "assistant not configured" } without Anthropic credentials and no local engine (stream: SSE `error`).
 // Listens on HOST (default 127.0.0.1: nginx is the only way in) and PORT. requestTimeout 15 s / headersTimeout 10 s
 // only bound how long receiving a request may take; SSE responses are not cut by them.
 // Guard rules (rate limits, origin, ASSISTANT_TOKEN) live in guard.ts; the Claude call and ship documents in claude.ts.
 // The API key stays here (ANTHROPIC_API_KEY or an `ant auth login` profile); the browser never sees it.
 // ASSISTANT_FAKE=1 runs with a deterministic fake Claude (no key, no network) for tests and demos.
+// ASSISTANT_ENGINE=claude (default) | local | auto picks who answers /api/chat*: `claude` = Claude only (503 "assistant
+// not configured" without credentials; the browser then answers with its own local engine, src/local/); `local` = the
+// free deterministic engine on the server (local.ts = src/local/engine.ts with the crew tools, no LLM); `auto` = Claude
+// when credentials (or ASSISTANT_FAKE=1) are set, otherwise the local engine.
 // In production it also serves the built front end from ../dist.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync, statSync } from 'node:fs';
@@ -19,9 +23,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clientIp, corsOrigin, originAllowed, takeToken, tokenOk, validateChat, type ChatInput } from './guard.ts';
 import { CONFIGURED, FAKE, MODEL, ask, askStream, describeError, knowledgeStats } from './claude.ts';
+import { localAsk, localAskStream } from './local.ts';
 import { CREW_API, crewEnabled, handleCrewProxy } from './crew.ts';
 import { attachCrewVideoWebSocket } from './crew-video.ts';
 import { attachAlarms, handleAlarmHttp } from './alarms.ts';
+import { handleStatsHttp } from './stats.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -31,6 +37,11 @@ const STARTED = Date.now();
 const HEARTBEAT_MS = 15_000;
 
 const NOT_CONFIGURED = 'assistant not configured';
+const ENGINE_ENV = (process.env.ASSISTANT_ENGINE || 'claude').trim().toLowerCase();
+if (!['auto', 'local', 'claude'].includes(ENGINE_ENV)) console.warn(`[assistant] unknown ASSISTANT_ENGINE=${ENGINE_ENV}, using claude`);
+/** the local engine answers the chat (no LLM): forced, or auto without Claude credentials */
+const LOCAL = ENGINE_ENV === 'local' || (ENGINE_ENV === 'auto' && !CONFIGURED);
+const ENGINE = LOCAL ? 'local' : 'claude';
 
 class BodyError extends Error {}
 
@@ -61,7 +72,7 @@ const log = (route: string, status: number, t0: number, note = '') =>
 /** Origin, token, rate limit, body. Sends the error response itself and returns null when the request is refused. */
 async function admit(req: IncomingMessage, res: ServerResponse, route: string, t0: number): Promise<ChatInput | null> {
   if (!originAllowed(req) || !tokenOk(req)) { send(res, 403, { error: 'forbidden' }); log(route, 403, t0); return null; }
-  if (!CONFIGURED) { // no API key on the server: answer at once, no SDK call, no rate-limit token
+  if (!LOCAL && !CONFIGURED) { // Claude only (ASSISTANT_ENGINE=claude) and no API key: answer at once, no SDK call, no token
     if (route === 'stream') {
       res.writeHead(503, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'close' });
       res.end(`event: error\ndata: ${JSON.stringify({ error: NOT_CONFIGURED })}\n\n`);
@@ -87,7 +98,7 @@ async function chat(req: IncomingMessage, res: ServerResponse, t0: number) {
   const ac = new AbortController();
   res.on('close', () => { if (!res.writableEnded) ac.abort(); });
   try {
-    const r = await ask(input.lang, input.messages, ac.signal);
+    const r = LOCAL ? await localAsk(input.lang, input.messages) : await ask(input.lang, input.messages, ac.signal);
     send(res, 200, r);
     log('chat', 200, t0);
   } catch (e) {
@@ -113,7 +124,10 @@ async function chatStream(req: IncomingMessage, res: ServerResponse, t0: number)
   const ac = new AbortController();
   res.on('close', () => { clearInterval(beat); if (!res.writableEnded) ac.abort(); });
   try {
-    const r = await askStream(input.lang, input.messages, (text) => event('delta', { text }), ac.signal);
+    const onDelta = (text: string) => event('delta', { text });
+    const r = LOCAL
+      ? await localAskStream(input.lang, input.messages, onDelta, ac.signal)
+      : await askStream(input.lang, input.messages, onDelta, ac.signal);
     event('done', r);
     log('stream', 200, t0);
   } catch (e) {
@@ -155,7 +169,7 @@ const server = createServer({ connectionsCheckingInterval: 2_000 }, async (req, 
     if (url === '/api/health') {
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'GET only' });
       return send(res, 200, {
-        ok: true, model: MODEL, configured: CONFIGURED, knowledge: knowledgeStats, uptime: Math.round((Date.now() - STARTED) / 1000),
+        ok: true, model: LOCAL ? 'local' : MODEL, engine: ENGINE, configured: CONFIGURED, knowledge: knowledgeStats, uptime: Math.round((Date.now() - STARTED) / 1000),
         ...(FAKE ? { fake: true } : {}),
       });
     }
@@ -176,6 +190,7 @@ const server = createServer({ connectionsCheckingInterval: 2_000 }, async (req, 
     }
     if (await handleCrewProxy(req, res)) return;
     if (await handleAlarmHttp(req, res)) return;
+    if (await handleStatsHttp(req, res)) return;
     if (url.startsWith('/api/')) return send(res, 404, { error: 'not found' });
     serveStatic(req, res);
   } catch (e) {
@@ -190,4 +205,4 @@ attachAlarms(server);
 // Only bound the time to RECEIVE a request (slow / unfinished bodies); a long SSE response is not affected.
 server.requestTimeout = REQUEST_TIMEOUT_MS;
 server.headersTimeout = HEADERS_TIMEOUT_MS;
-server.listen(PORT, HOST, () => console.log(`[assistant] http://${HOST.includes(':') ? `[${HOST}]` : HOST}:${PORT}  model=${MODEL}${FAKE ? '  FAKE client' : ''}${CONFIGURED ? '' : '  NOT CONFIGURED (no API key)'}  crew=${crewEnabled ? CREW_API : 'off'}`));
+server.listen(PORT, HOST, () => console.log(`[assistant] http://${HOST.includes(':') ? `[${HOST}]` : HOST}:${PORT}  engine=${ENGINE}${LOCAL ? '' : `  model=${MODEL}`}${FAKE && !LOCAL ? '  FAKE client' : ''}${CONFIGURED || LOCAL ? '' : '  NOT CONFIGURED (no API key)'}  crew=${crewEnabled ? CREW_API : 'off'}`));

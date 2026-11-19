@@ -1,4 +1,13 @@
-// The chat talks to the assistant server (server/index.ts), which calls Claude with the API key kept on the server.
+// One interface, two engines (like the Filharmonia assistant):
+//  - LOCAL (default): src/local/engine.ts, deterministic retrieval + templates over the drill cards, evacuation routes and
+//    the crew database (read through the /api/crew/* proxy). Runs in the browser, instant, no API key, works offline
+//    (except crew questions). Answers carry a "Tryb lokalny" source and stream as a couple of deltas, so the chat,
+//    Mewka's animations and the voice flow behave exactly as with the server.
+//  - REMOTE: the assistant server (server/index.ts), which calls Claude with the API key kept on the server. Used when
+//    VITE_ASSISTANT_MODE=remote, or (VITE_ASSISTANT_MODE=auto, the default) when GET /api/health says
+//    `configured: true` and `engine` is not "local". If the server cannot be reached, says "not configured" or fails,
+//    the local engine answers instead. VITE_ASSISTANT_MODE=local never calls the chat endpoints.
+// Remote details:
 //  - askStream(history, lang, { onDelta, signal }): POST /api/chat/stream (Server-Sent Events). onDelta gets the
 //    whole visible text so far after every chunk; the promise resolves with the final, authoritative answer
 //    from the `done` event. On a network error / non-SSE reply / `error` event it falls back ONCE to the JSON
@@ -9,7 +18,9 @@
 // If VITE_ASSISTANT_TOKEN is set it is sent as `x-assistant-token` to both endpoints. It is NOT a secret: Vite builds
 // it into the public bundle, so it only filters casual bots (see docs/ASSISTANT-API.md).
 import type { Answer, Lang, Turn } from './types';
-import { STR } from './i18n';
+import { STR } from './i18n.ts';
+import { answerLocal, answerDeltas } from './local/engine.ts';
+import { httpCrewSource } from './local/crew.ts';
 
 // `?? {}` keeps this module importable outside Vite (node tests); Vite replaces import.meta.env statically.
 const ENV: Record<string, string | boolean | undefined> = import.meta.env ?? {};
@@ -18,6 +29,10 @@ const str = (k: string) => (typeof ENV[k] === 'string' && ENV[k] ? (ENV[k] as st
 const URL_JSON = str('VITE_ASSISTANT_URL') || '/api/chat';
 const URL_STREAM = str('VITE_ASSISTANT_STREAM_URL') || URL_JSON.replace(/\/+$/, '') + '/stream';
 const TOKEN = str('VITE_ASSISTANT_TOKEN');
+const MODE_ENV = (str('VITE_ASSISTANT_MODE') || 'auto').toLowerCase();
+export const MODE: 'local' | 'remote' | 'auto' = MODE_ENV === 'local' || MODE_ENV === 'remote' ? MODE_ENV : 'auto';
+/** /api/health and /api/crew/* next to the chat endpoint (same origin by default) */
+const API_BASE = URL_JSON.replace(/\/chat\/?$/, '');
 /** JSON: whole request; stream: max silence between two chunks (the server sends heartbeats) */
 const TIMEOUT_MS = 60000;
 
@@ -173,7 +188,7 @@ export async function* sseEvents(stream: ReadableStream<Uint8Array>, onChunk?: (
 // ---------------------------------------------------------------- public
 
 /** Plain JSON endpoint. */
-export async function ask(history: Turn[], lang: Lang, signal?: AbortSignal): Promise<Reply> {
+async function remoteAsk(history: Turn[], lang: Lang, signal?: AbortSignal): Promise<Reply> {
   const l = linked(signal);
   try {
     const res = await fetch(URL_JSON, {
@@ -191,7 +206,7 @@ export async function ask(history: Turn[], lang: Lang, signal?: AbortSignal): Pr
 }
 
 /** Streaming endpoint with one JSON fallback. */
-export async function askStream(history: Turn[], lang: Lang, opts: StreamOpts = {}): Promise<Reply> {
+async function remoteAskStream(history: Turn[], lang: Lang, opts: StreamOpts = {}): Promise<Reply> {
   const { onDelta, signal } = opts;
   let soFar = '';
   let shown = '';
@@ -233,5 +248,64 @@ export async function askStream(history: Turn[], lang: Lang, opts: StreamOpts = 
   if (signal?.aborted) return aborted(soFar);
   // network error, non-SSE reply, error event or a stream without `done`: the JSON endpoint, once
   if (shown) onDelta?.('');
-  return ask(history, lang, signal);
+  return remoteAsk(history, lang, signal);
+}
+
+// ---------------------------------------------------------------- local engine + mode
+
+const crewHeaders = (): Record<string, string> => (TOKEN ? { 'x-assistant-token': TOKEN } : {});
+
+/** The local engine's answer as a Reply (crew questions read the /api/crew/* proxy). */
+export async function askLocal(history: Turn[], lang: Lang): Promise<Reply> {
+  const a = await answerLocal(lang, history.slice(-20), httpCrewSource(API_BASE.replace(/\/api$/, ''), crewHeaders()));
+  return { text: a.text, sources: a.sources, fallback: a.fallback, actions: a.actions };
+}
+
+let health: { t: number; remote: Promise<boolean> } | null = null;
+/** auto mode: does the server have an LLM? (GET /api/health, cached for a minute, 2.5 s timeout, false on any error) */
+function remoteReady(): Promise<boolean> {
+  if (MODE === 'remote') return Promise.resolve(true);
+  if (MODE === 'local') return Promise.resolve(false);
+  if (health && Date.now() - health.t < 60_000) return health.remote;
+  const remote = (async () => {
+    try {
+      const r = await fetch(API_BASE + '/health', { signal: AbortSignal.timeout(2500), credentials: 'omit' });
+      if (!r.ok) return false;
+      const j = await r.json();
+      return j?.configured === true && j?.engine !== 'local';
+    } catch { return false; }
+  })();
+  health = { t: Date.now(), remote };
+  return remote;
+}
+
+/** a remote failure the local engine should cover (not a stop, not a rate limit) */
+const coverLocally = (r: Reply) => !!r.notConfigured || (!!r.remoteFailed && !r.aborted && !r.rateLimited);
+
+/** Plain answer: local engine, or the server when it has an LLM. */
+export async function ask(history: Turn[], lang: Lang, signal?: AbortSignal): Promise<Reply> {
+  if (!(await remoteReady())) return askLocal(history, lang);
+  const r = await remoteAsk(history, lang, signal);
+  if (coverLocally(r)) { health = null; return askLocal(history, lang); }
+  return r;
+}
+
+/** Streaming answer: the local answer arrives as a couple of deltas (one per paragraph) like an SSE stream. */
+export async function askStream(history: Turn[], lang: Lang, opts: StreamOpts = {}): Promise<Reply> {
+  const { onDelta, signal } = opts;
+  if (await remoteReady()) {
+    const r = await remoteAskStream(history, lang, opts);
+    if (!coverLocally(r)) return r;
+    health = null;
+    onDelta?.('');
+  }
+  const r = await askLocal(history, lang);
+  let soFar = '';
+  for (const d of answerDeltas(r)) {
+    if (signal?.aborted) return aborted(soFar);
+    soFar += d;
+    onDelta?.(soFar);
+    await new Promise((res) => setTimeout(res, 40));
+  }
+  return signal?.aborted ? aborted(soFar) : r;
 }
