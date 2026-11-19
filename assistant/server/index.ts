@@ -7,6 +7,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { attachCrewVideoWebSocket } from './crew-video.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -31,7 +32,7 @@ Never ask for personal data. You are an AI; say so if asked.
 ${KNOWLEDGE}
 </knowledge>`;
 
-const client = new Anthropic();
+let client: Anthropic | undefined;
 if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN && !process.env.ANTHROPIC_PROFILE)
   console.warn('[assistant] no ANTHROPIC_API_KEY in env or .env: answers will fail unless an `ant auth login` profile exists');
 
@@ -53,7 +54,7 @@ function clean(raw: unknown): Turn[] {
 }
 
 async function chat(lang: string, messages: Turn[]) {
-  const response = await client.beta.messages.create({
+  const response = await (client ??= new Anthropic()).beta.messages.create({
     model: MODEL,
     max_tokens: 4000,
     betas: ['server-side-fallback-2026-07-01'],
@@ -103,7 +104,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   res.end(readFileSync(file));
 }
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   if (req.url?.startsWith('/api/chat')) {
     if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
     try {
@@ -121,4 +122,6 @@ createServer(async (req, res) => {
     }
   }
   serveStatic(req, res);
-}).listen(PORT, () => console.log(`[assistant] http://localhost:${PORT}  model=${MODEL}`));
+});
+attachCrewVideoWebSocket(server);
+server.listen(PORT, () => console.log(`[assistant] http://localhost:${PORT}  model=${MODEL}`));

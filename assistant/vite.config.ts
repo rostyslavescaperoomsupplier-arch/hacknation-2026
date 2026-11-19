@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: { dedupe: ['react', 'react-dom', 'three'] },
   server: {
     fs: { allow: ['..'] },
-    proxy: { '/api': 'http://localhost:8787' },
+    proxy: {
+      '/api': 'http://localhost:8787',
+      '/crew-video-ws': { target: 'ws://localhost:8787', ws: true },
+    },
   },
 });
