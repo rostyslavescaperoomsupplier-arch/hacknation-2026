@@ -15,3 +15,4 @@ assistant/server/data/demo-pins.txt
 assistant/server/data/sessions.json
 assistant/server/data/*.tmp
 assistant/server/data/alarms.json
+assistant/server/data/tasks.json

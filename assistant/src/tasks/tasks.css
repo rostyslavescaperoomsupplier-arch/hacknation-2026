@@ -1,0 +1,36 @@
+/* Crew task list (TasksPanel.tsx). Colours only through the theme tokens, so light / dim dark / night all work.
+   Priority = left stripe + filled label (text too, not colour alone): urgent red, high orange, normal teal, low line. */
+.task-card { --prio: var(--c-line); }
+.task-card[data-prio="urgent"] { --prio: var(--c-danger); }
+.task-card[data-prio="high"] { --prio: var(--c-gold); }
+.task-card[data-prio="normal"] { --prio: var(--c-teal); }
+.task-stripe { position: absolute; inset-block: 0; inset-inline-start: 0; width: 6px; background: var(--prio); }
+.task-prio { border: 1px solid var(--prio); color: var(--c-ink); }
+.task-card[data-prio="urgent"] .task-prio { background: var(--c-danger); border-color: var(--c-danger); color: var(--c-on-strong); }
+.task-card[data-prio="high"] .task-prio { background: var(--c-gold-ink); border-color: var(--c-gold-ink); color: var(--c-on-strong); }
+.task-card[data-status="done"], .task-card[data-status="cancelled"] { --prio: var(--c-line); background: var(--c-paper-2); }
+.task-card[data-status="done"] .task-prio, .task-card[data-status="cancelled"] .task-prio { background: transparent; border-color: var(--c-line); color: var(--c-ink-2); }
+.task-status[data-s="in-progress"] { color: var(--c-teal); }
+.task-status[data-s="done"] { color: var(--c-ok); }
+.task-chip {
+  display: inline-flex; align-items: center; gap: 0.375rem; min-height: 32px; padding: 0.25rem 0.625rem;
+  border: 1px solid var(--c-line); border-radius: var(--radius-card); background: var(--c-paper-2); font-weight: 600;
+}
+.task-alarm { background: color-mix(in srgb, var(--c-danger) 6%, var(--c-page)); }
+.task-seg { transition: background-color var(--dur-1) ease, color var(--dur-1) ease; }
+.task-seg[aria-pressed="true"] { background: var(--c-navy); color: var(--c-on-strong); }
+.task-seg[aria-pressed="true"][data-prio="urgent"] { background: var(--c-danger); }
+.task-seg[aria-pressed="true"][data-prio="high"] { background: var(--c-gold-ink); }
+:root[data-theme="night"] .task-seg[aria-pressed="true"] { background: #3d0f0a; color: #f06a4c; box-shadow: inset 0 0 0 1px #8a2a1c; }
+:root[data-theme="night"] :is(.task-card[data-prio="urgent"], .task-card[data-prio="high"]) .task-prio { background: transparent; color: var(--prio); }
+
+/* tab badge: my active tasks */
+.app-tab-badge {
+  position: absolute; top: 6px; inset-inline-start: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 4px;
+  border-radius: 9px; background: var(--c-danger); color: var(--c-on-strong); font-size: 0.6875rem; font-weight: 700;
+  line-height: 18px; text-align: center; letter-spacing: 0;
+}
+@media (min-width: 1024px) {
+  .app-tab-badge { position: static; margin-inline-start: 0.375rem; }
+}
+:root[data-theme="night"] .app-tab-badge { background: #2a0402; color: var(--c-danger); box-shadow: inset 0 0 0 1px var(--c-danger); }

@@ -133,10 +133,13 @@ input::placeholder, textarea::placeholder { color: var(--c-ink-2); opacity: 1; }
 .app-tab-ic { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 1.75rem; border-radius: 999px; transition: background-color var(--dur-1) ease; }
 .app-tab[aria-selected="true"] .app-tab-ic { background: color-mix(in srgb, var(--c-gold) 16%, transparent); }
 @media (min-width: 1024px) { .app-tab-ic { display: none; } }
-/* six tabs on a 360 px phone: 60 px cells, slightly smaller label, the icon carries the recognition */
+/* eight tabs on a 360 px phone: 45 px cells, slightly smaller label and abbreviations (App.tsx `tiny`), the icon
+   carries the recognition */
+.app-tab-tiny { display: none; }
 @media (max-width: 419.98px) { .app-tab { font-size: 0.6875rem; letter-spacing: 0; padding-inline: 0; } .app-tab-ic { width: 2.5rem; } }
-/* wide tablets: cells wide enough (>= 128 px) for icon and label side by side; below that the label would be cut */
-@media (min-width: 900px) and (max-width: 1023.98px) {
+@media (max-width: 539.98px) { .app-tab-full { display: none; } .app-tab-tiny { display: block; } }
+/* wide tablets: cells wide enough (>= 125 px with 8 tabs) for icon and label side by side; below that the label would be cut */
+@media (min-width: 1000px) and (max-width: 1023.98px) {
   .app-tab { flex-direction: row; gap: 0.5rem; font-size: 0.8125rem; }
 }
 @media (min-width: 1024px) {

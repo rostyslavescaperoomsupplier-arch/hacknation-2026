@@ -202,6 +202,13 @@ async function fetchCrew(): Promise<Member[] | null> {
   } catch { return null; }
 }
 
+/** One crew member by account id (no card / PIN data), from the cached roster; for other modules (server/tasks.ts). */
+export function memberInfo(id: number): { id: number; name: string; rank: string; department: string; role: Role } | null {
+  loadAccounts();
+  const m = members.find((x) => x.id === id);
+  return m ? { id: m.id, name: m.name, rank: m.rank, department: m.department, role: m.role } : null;
+}
+
 /** Refresh the roster from the crew DB (at most once per ROSTER_TTL_MS unless forced); new members get a PIN. */
 export async function syncRoster(force = false): Promise<void> {
   loadAccounts();

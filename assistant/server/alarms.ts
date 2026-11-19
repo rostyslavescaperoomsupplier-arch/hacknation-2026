@@ -39,6 +39,8 @@ import { fileURLToPath } from 'node:url';
 import { clientIp, corsOrigin, originAllowed, tokenOk } from './guard.ts';
 import { crewEnabled, crewGet } from './crew.ts';
 import { attachAuth, getSession, hasRole, type Session } from './auth.ts';
+// crew task list: auto tasks per alarm (tasks.ts never imports this module, no cycle)
+import { alarmTasksEnded, alarmTasksRaised, alarmTasksSensor, alarmTasksSync } from './tasks.ts';
 import { CREW_ROOM_PLACES } from '../shared/crew-map.ts';
 import { SENSOR, SENSORS_MAX, isSensorId } from '../shared/sensors.ts';
 import {
@@ -114,6 +116,7 @@ function load() {
   for (const a of log.slice(1)) if (!a.endedAt) a.endedAt = a.at; // only one can be active
 }
 load();
+alarmTasksSync(activeAlarm()?.id ?? null);
 
 let saveTimer: NodeJS.Timeout | null = null;
 function writeNow() {
@@ -142,14 +145,16 @@ export function sensorTriggered(id: string, drill: boolean): { alarm: Alarm; cre
   const now = new Date().toISOString();
   if (active && active.kind === 'fire') {
     const list = active.sensors ?? [];
-    if (!list.includes(id) && list.length < SENSORS_MAX) active.sensors = [...list, id];
+    const added = !list.includes(id) && list.length < SENSORS_MAX;
+    if (added) active.sensors = [...list, id];
     if (!active.zone && isAlarmZone(s.zone)) active.zone = s.zone;
+    if (added) alarmTasksSensor(active, id);
     scheduleSave();
     console.log(`[alarms] SENSOR ${id} added to the active fire alarm`);
     broadcast('raised');
     return { alarm: active, created: false };
   }
-  if (active) { active.endedAt = now; active.endedBy = `Czujka ${id}`; active.endReason = 'replaced'; }
+  if (active) { active.endedAt = now; active.endedBy = `Czujka ${id}`; active.endReason = 'replaced'; alarmTasksEnded(active.id, true); }
   const alarm: Alarm = {
     id: randomUUID(), kind: 'fire', zone: isAlarmZone(s.zone) ? s.zone : null, blocked: null,
     message: `Zadziałała ${s.type === 'smoke' ? 'czujka dymu' : s.type === 'heat' ? 'czujka ciepła' : 'czujka płomienia'}: ${s.name.pl} (${id}).`,
@@ -158,6 +163,7 @@ export function sensorTriggered(id: string, drill: boolean): { alarm: Alarm; cre
   active = alarm;
   log.unshift(alarm);
   if (log.length > LOG_CAP) log.length = LOG_CAP;
+  alarmTasksRaised(alarm);
   scheduleSave();
   console.log(`[alarms] RAISE ${drill ? 'drill' : 'REAL'} fire from SENSOR ${id} zone=${alarm.zone ?? '-'}`);
   void refreshMuster('raised');
@@ -341,6 +347,7 @@ function raise(c: Conn, d: Payload) {
     active.endedAt = now;
     active.endedBy = `${who(s)} (${t.name})`;
     active.endReason = 'replaced';
+    alarmTasksEnded(active.id, true);
   }
   const sensors = Array.isArray(d.sensors) && d.sensors.length ? [...new Set(d.sensors as string[])] : undefined;
   // no zone given: the first detector's zone (stairwells have none of their own)
@@ -355,6 +362,7 @@ function raise(c: Conn, d: Payload) {
   active = alarm;
   log.unshift(alarm);
   if (log.length > LOG_CAP) log.length = LOG_CAP;
+  alarmTasksRaised(alarm);
   scheduleSave();
   console.log(`[alarms] RAISE ${alarm.drill ? 'drill' : 'REAL'} ${alarm.kind} zone=${alarm.zone ?? '-'} by ${who(s)} #${s.accountId} at ${t.name} (${t.terminalId})`);
   void refreshMuster('raised');
@@ -399,6 +407,7 @@ function end(c: Conn, d: Payload) {
   active.endedBy = `${who(s)} (${t.name})`;
   active.endReason = 'ended';
   console.log(`[alarms] END ${active.kind} by ${who(s)} #${s.accountId} at ${t.name}`);
+  alarmTasksEnded(active.id);
   active = null;
   scheduleSave();
   void refreshMuster('ended');

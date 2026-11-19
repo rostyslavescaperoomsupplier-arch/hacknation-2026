@@ -1,6 +1,6 @@
 // App shell: header (wordmark, language toggle), tabs with hash routing, shared state between the panels.
 // Tabs: #asystent (chat) | #statek (ShipPanel model) | #ewakuacja (ShipPanel evac) | #cwiczenia (DrillsPanel)
-//       | #lacznosc (crew voice / video calls between terminals, src/crew/).
+//       | #lacznosc (crew voice / video calls between terminals, src/crew/) | #zadania (crew task list, src/tasks/).
 // One ShipPanel instance serves both ship tabs (only its mode changes), so the 10 MB model loads once;
 // it stays mounted under `hidden` and pauses itself when not visible.
 // The comms panel is mounted as soon as someone is logged in (not lazily): a configured terminal must be reachable
@@ -26,15 +26,20 @@ const ShipPanel = lazy(() => import('./ship/ShipPanel'));
 const DrillsPanel = lazy(() => import('./drills/DrillsPanel'));
 const AlarmPanel = lazy(() => import('./alarm/AlarmPanel'));
 const StatsPanel = lazy(() => import('./stats/StatsPanel'));
+const TasksPanel = lazy(() => import('./tasks/TasksPanel'));
+// crew task list (server/tasks.ts): tab badge = my active tasks; its CSS (badge too) loads with the shell
+import { useTaskBadge } from './tasks/useTasks';
+import './tasks/tasks.css';
 
-type Tab = 'asystent' | 'alarmy' | 'statek' | 'ewakuacja' | 'cwiczenia' | 'lacznosc' | 'statystyki';
+type Tab = 'asystent' | 'alarmy' | 'zadania' | 'statek' | 'ewakuacja' | 'cwiczenia' | 'lacznosc' | 'statystyki';
 // Alarmy right after Asystent: safety-critical
-const TABS: Tab[] = ['asystent', 'alarmy', 'statek', 'ewakuacja', 'cwiczenia', 'lacznosc', 'statystyki'];
+const TABS: Tab[] = ['asystent', 'alarmy', 'zadania', 'statek', 'ewakuacja', 'cwiczenia', 'lacznosc', 'statystyki'];
 
-// Phone bottom bar: 6 tabs at 360 px = 60 px each (>= 48 px), so an icon above a short label (desktop: label only).
+// Phone bottom bar: 8 tabs at 360 px = 45 px each (icon 24 px + short label), so an icon above a short label (desktop: label only).
 const TAB_ICON: Record<Tab, string[]> = {
   asystent: ['M4 5h16v11H9l-4 3.5V16H4Z', 'M8 9.5h8', 'M8 12.5h5'],
   alarmy: ['M12 3.5 21 19.5H3Z', 'M12 9.5v4.5', 'M12 16.8v.2'],
+  zadania: ['M9 3.5h6v3H9Z', 'M9 5H5.5v15.5h13V5H15', 'M8.5 11.5l1.2 1.2 2-2', 'M13.5 11.8h2.5', 'M8.5 16.5l1.2 1.2 2-2', 'M13.5 16.8h2.5'],
   statystyki: ['M4 20V10', 'M10 20V4', 'M16 20v-7', 'M21 20H3'],
   statek: ['M2.5 14.5h19l-2.5 5h-14Z', 'M6 14.5v-4h12v4', 'M9 10.5V7h5v3.5', 'M11.5 7V4'],
   ewakuacja: ['M13.5 4.5a1.5 1.5 0 1 0 0.01 0', 'M10 20l2-5.5 2.5 2.5V20', 'M8 11l3-3h3l2 3.5 2.5 1', 'M12 14.5 11 8'],
@@ -86,7 +91,7 @@ function Shell({ initialLang }: { initialLang: Lang }) {
   const [typing, setTyping] = useState(false);
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [themeLive, setThemeLive] = useState('');
-  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ asystent: null, alarmy: null, statek: null, ewakuacja: null, cwiczenia: null, lacznosc: null, statystyki: null });
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ asystent: null, alarmy: null, zadania: null, statek: null, ewakuacja: null, cwiczenia: null, lacznosc: null, statystyki: null });
 
   const setTab = useCallback((t: Tab) => {
     setTabState(t);
@@ -152,12 +157,17 @@ function Shell({ initialLang }: { initialLang: Lang }) {
 
   const label: Record<Tab, string> = {
     asystent: s.tab_assistant, alarmy: s.tab_alarms, statek: s.tab_ship, ewakuacja: s.tab_evac, cwiczenia: s.tab_drills,
-    lacznosc: s.tab_comms, statystyki: lang === 'pl' ? 'Statystyki' : 'Stats',
+    lacznosc: s.tab_comms, statystyki: lang === 'pl' ? 'Statystyki' : 'Stats', zadania: lang === 'pl' ? 'Zadania' : 'Tasks',
   };
   // shorter phone labels where the desktop one does not fit 72 px
   const short: Partial<Record<Tab, string>> = lang === 'pl' ? { statek: 'Statek' } : { statek: 'Ship', ewakuacja: 'Evac' };
+  // 8 tabs on a phone under 540 px = 45-67 px cells: abbreviations (the full name stays the aria-label)
+  const tiny: Partial<Record<Tab, string>> = lang === 'pl'
+    ? { ewakuacja: 'Ewak.', cwiczenia: 'Ćwicz.', lacznosc: 'Łączn.', statystyki: 'Statyst.' }
+    : { asystent: 'Assist.', statek: 'Ship', ewakuacja: 'Evac', cwiczenia: 'Drills', lacznosc: 'Comms', statystyki: 'Stats' };
   const openComms = useCallback(() => setTab('lacznosc'), [setTab]);
   const L = (pl: string, en: string) => (lang === 'pl' ? pl : en);
+  const taskBadge = useTaskBadge(!!user);
 
   // Łączność needs a login: offer it once each time the tab is opened without one
   useEffect(() => {
@@ -190,33 +200,36 @@ function Shell({ initialLang }: { initialLang: Lang }) {
     <AlarmProvider>
     <div className="app min-h-dvh" data-typing={typing || undefined}>
       <header className="app-header sticky top-0 z-30 border-b border-line bg-page">
-        <div className="gutter mx-auto flex max-w-6xl items-center gap-2 py-2 sm:gap-3 lg:flex-wrap lg:gap-x-4 lg:py-0 lg:pt-1 xl:flex-nowrap xl:gap-x-3">
+        <div className="gutter mx-auto flex max-w-6xl items-center gap-2 py-2 sm:gap-3 lg:flex-wrap lg:gap-x-4 lg:py-0 lg:pt-1">
           <a href="#asystent" onClick={(e) => { e.preventDefault(); setTab('asystent'); }}
              className="flex min-w-0 flex-col py-1 no-underline lg:shrink-0 lg:py-3">
             <span className="tech-title truncate text-[1.125rem] tracking-[0.06em] min-[400px]:text-[1.25rem] sm:text-[1.5rem]">Jantar Unity</span>
-            <span className="tech-kicker hidden truncate sm:block xl:hidden">{s.app_kicker}</span>
+            <span className="tech-kicker hidden truncate sm:block">{s.app_kicker}</span>
           </a>
 
           <div role="tablist" aria-label={s.tabs_label}
-               className="app-tabs fixed inset-x-0 bottom-0 z-30 grid grid-cols-7 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)]
-                          lg:static lg:order-last lg:-mx-3 lg:flex lg:basis-full lg:self-stretch lg:border-t-0 lg:bg-transparent lg:pb-0
-                          xl:order-none xl:mx-0 xl:min-w-0 xl:basis-auto">
+               className="app-tabs fixed inset-x-0 bottom-0 z-30 grid grid-cols-8 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)]
+                          lg:static lg:order-last lg:-mx-3 lg:flex lg:basis-full lg:self-stretch lg:border-t-0 lg:bg-transparent lg:pb-0">
             {TABS.map((t) => (
               <button key={t} ref={(el) => { tabRefs.current[t] = el; }} type="button" role="tab" id={`tab-${t}`}
                       aria-selected={tab === t} aria-controls={t === 'statek' || t === 'ewakuacja' ? 'panel-ship' : `panel-${t}`}
                       tabIndex={tab === t ? 0 : -1} onClick={() => setTab(t)} onKeyDown={onTabKey}
-                      aria-label={short[t] ? label[t] : undefined}
+                      aria-label={short[t] || tiny[t] ? label[t] : undefined}
                       className="app-tab relative flex min-h-[60px] min-w-0 flex-col items-center justify-center gap-0.5 px-0.5
                                  text-[0.8125rem] font-semibold leading-tight text-ink-2
-                                 hover:text-ink aria-selected:text-ink lg:min-h-[52px] lg:flex-row lg:px-3 lg:text-[0.875rem] lg:uppercase lg:tracking-[0.05em] xl:min-h-[64px]">
+                                 hover:text-ink aria-selected:text-ink lg:min-h-[52px] lg:flex-row lg:px-3 lg:text-[0.875rem] lg:uppercase lg:tracking-[0.05em]">
                 <span className="app-tab-ic lg:hidden">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}
                        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className="shrink-0">
                     {TAB_ICON[t].map((d, i) => <path key={i} d={d} />)}
                   </svg>
                 </span>
-                <span className="max-w-full truncate lg:hidden">{short[t] ?? label[t]}</span>
+                <span className={`max-w-full truncate lg:hidden ${tiny[t] ? 'app-tab-full' : ''}`}>{short[t] ?? label[t]}</span>
+                {tiny[t] && <span className="app-tab-tiny max-w-full truncate" aria-hidden="true">{tiny[t]}</span>}
                 <span className="hidden whitespace-nowrap lg:inline">{label[t]}</span>
+                {t === 'zadania' && !!taskBadge && (
+                  <><span className="app-tab-badge" aria-hidden="true">{taskBadge > 99 ? '99+' : taskBadge}</span><span className="sr-only">{L(`, aktywne: ${taskBadge}`, `, active: ${taskBadge}`)}</span></>
+                )}
               </button>
             ))}
           </div>
@@ -298,6 +311,15 @@ function Shell({ initialLang }: { initialLang: Lang }) {
                 {L('Zaloguj', 'Log in')}
               </button>
             </div>
+          )}
+        </section>
+
+        <section id="panel-zadania" role="tabpanel" aria-labelledby="tab-zadania" hidden={tab !== 'zadania'}
+                 className="gutter mx-auto max-w-6xl py-4">
+          {seen.has('zadania') && (
+            <Suspense fallback={fallback}>
+              <TasksPanel lang={lang} visible={tab === 'zadania'} />
+            </Suspense>
           )}
         </section>
 
