@@ -20,7 +20,8 @@ export async function ask(history: Turn[], lang: Lang): Promise<Answer & { remot
     clearTimeout(timer);
     if (!res.ok) throw new Error(String(res.status));
     const r = (await res.json()) as Answer;
-    return { text: r.text?.length ? r.text : [STR[lang].offline], sources: r.sources ?? [], fallback: r.fallback };
+    return { text: r.text?.length ? r.text : [STR[lang].offline], sources: r.sources ?? [], fallback: r.fallback,
+             actions: Array.isArray(r.actions) ? r.actions : [] };
   } catch {
     return { text: [STR[lang].offline], sources: [], fallback: true, remoteFailed: true };
   }

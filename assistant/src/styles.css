@@ -65,8 +65,31 @@ body { margin: 0; background: var(--c-page); color: var(--c-ink); font-family: v
 .panel { background: var(--c-paper); border: 1px solid var(--c-line); border-radius: var(--radius-card); }
 .tap { min-height: 44px; min-width: 44px; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.asst-dock { bottom: 0; }
+/* ---- app shell (App.tsx) ----
+   Phones: the tab bar is fixed to the bottom (52px targets + safe area); the chat composer sits on top of it.
+   While the chat field has focus the bar steps aside so the composer can ride the keyboard. Desktop: top tabs. */
+.app { --tabbar-h: calc(52px + env(safe-area-inset-bottom)); }
+.app-main { padding-bottom: var(--tabbar-h); }
+.app[data-typing] { --tabbar-h: 0px; }
+@media (max-width: 1023.98px) {
+  .app[data-typing] .app-tabs { display: none; }
+}
+@media (min-width: 1024px) {
+  .app { --tabbar-h: 0px; }
+}
+.app-tab { transition: color var(--dur-1) ease; }
+.app-tab[aria-selected="true"]::before {
+  content: ""; position: absolute; inset-inline: 18%; top: 0; height: 3px; background: var(--c-gold);
+}
+@media (min-width: 1024px) {
+  .app-tab[aria-selected="true"]::before { top: auto; bottom: -1px; inset-inline: 12px; }
+}
+.app [hidden] { display: none !important; }
+
+.asst-dock { bottom: var(--tabbar-h, 0px); }
 .asst-dock[data-kb] { bottom: var(--kb); }
+.asst-act { transition: background-color var(--dur-1) ease, transform var(--dur-1) var(--ease-out); }
+.asst-act:active { transform: scale(0.98); }
 .asst-head { padding-inline: 30px 10px; }
 .asst-head .mewka--xl { inline-size: 120px; block-size: 120px; }
 @media (prefers-reduced-motion: reduce) {

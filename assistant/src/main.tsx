@@ -1,15 +1,14 @@
 import { createRoot } from 'react-dom/client';
-import Assistant from './Assistant';
+import App from './App';
 import type { Lang } from './types';
 import './styles.css';
 
+// Polish is the main language: the app always opens in Polish; ?lang=en (or de / uk) is an explicit option only.
 const LANGS: Lang[] = ['pl', 'en', 'de', 'uk'];
 function pickLang(): Lang {
   const q = new URLSearchParams(location.search).get('lang');
-  if (q && (LANGS as string[]).includes(q)) return q as Lang;
-  const nav = (navigator.language || 'pl').slice(0, 2);
-  return (LANGS as string[]).includes(nav) ? (nav as Lang) : 'pl';
+  return q && (LANGS as string[]).includes(q) ? (q as Lang) : 'pl';
 }
 const lang = pickLang();
 document.documentElement.lang = lang;
-createRoot(document.getElementById('app')!).render(<Assistant lang={lang} />);
+createRoot(document.getElementById('app')!).render(<App initialLang={lang} />);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
-import type { Answer, Lang, Turn } from './types';
-import { STR, CONTACT } from './i18n';
+import type { Action, Answer, Lang, Stair, Turn } from './types';
+import { STR, CONTACT, contactLabel } from './i18n';
 import { ask } from './adapter';
 import { MewkaReact } from '../../mewka/src/mewka/MewkaReact';
 import type { MewkaState } from '../../mewka/src';
@@ -24,7 +24,15 @@ function mascotEnabled(): boolean {
   try { return localStorage.getItem('fs-mascot') !== 'off'; } catch { return true; }
 }
 
-export default function Assistant({ lang }: { lang: Lang }) {
+export interface AssistantProps {
+  lang: Lang;
+  /** open the Ewakuacja tab with this zone (and a blocked stairwell) */
+  onRoute?(zone: string, blocked: Stair | null): void;
+  /** open the Ćwiczenia tab on this drill */
+  onDrill?(id: string): void;
+}
+
+export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
   const s = STR[lang];
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [value, setValue] = useState('');
@@ -53,11 +61,11 @@ export default function Assistant({ lang }: { lang: Lang }) {
     });
   }
 
-  /** what the big Mewka aims at: the contact links of the newest answer, else the answer itself */
+  /** what the big Mewka aims at: the action buttons of the newest answer, then the contact link, else the answer */
   function pointTarget(): Element | null {
     const last = [...msgs].reverse().find((m) => m.role === 'bot');
     const box = last && document.getElementById(`msg-${last.id}`);
-    return box?.querySelector('a[href^="tel:"]') ?? box?.querySelector('ol a') ?? box ?? null;
+    return box?.querySelector('[data-action]') ?? box?.querySelector('a[href^="tel:"]') ?? box?.querySelector('ol a') ?? box ?? null;
   }
 
   // ---- voice mode (speech in / speech out): see voice/useVoice.ts ----
@@ -90,7 +98,7 @@ export default function Assistant({ lang }: { lang: Lang }) {
     // voice mode: the answer is read aloud and the gull talks per sentence instead of the beats below
     if (voice.onAnswer(id, a)) return;
     if (a.fallback) play(['talking', T.talk / 2], ['unsure', T.unsure], ['pointing', T.point]);
-    else if (a.sources.length) play(['talking', T.talk], ['pointing', T.point]);
+    else if (a.actions?.length || a.sources.length) play(['talking', T.talk], ['pointing', T.point]);
     else play(['talking', T.talk]);
   }
 
@@ -117,7 +125,7 @@ export default function Assistant({ lang }: { lang: Lang }) {
     else if (moodRef.current === 'listening') play(['idle']);
   }
   function onLogClick(ev: MouseEvent) {
-    const link = (ev.target as Element).closest?.('a');
+    const link = (ev.target as Element).closest?.('a, [data-action]');
     if (link) play(['happy', T.happy]);
   }
 
@@ -152,6 +160,13 @@ export default function Assistant({ lang }: { lang: Lang }) {
     input.current?.focus();
   }
 
+  function runAction(a: Action) {
+    voice.onUserInput();
+    play(['happy', T.happy]);
+    if (a.type === 'route') onRoute?.(a.zone, a.blocked ?? null);
+    else onDrill?.(a.id);
+  }
+
   function clear() {
     voice.onUserInput();
     setMsgs([]);
@@ -169,8 +184,8 @@ export default function Assistant({ lang }: { lang: Lang }) {
           </span>
         )}
         <div className="min-w-0 pb-2">
-          <h1 className="text-h2 font-semibold">{s.title}</h1>
-          <p className="text-sm text-ink-2">{s.ai_badge}</p>
+          <p className="tech-kicker">{s.ai_badge}</p>
+          <h1 className="tech-title mt-1 text-h2">{s.title}</h1>
         </div>
       </header>
 
@@ -183,13 +198,13 @@ export default function Assistant({ lang }: { lang: Lang }) {
         {msgs.map((m, i) =>
           m.role === 'user' ? (
             <div key={m.id} className="asst-user flex justify-end">
-              <p className="max-w-[85%] whitespace-pre-wrap rounded-[1.25rem] rounded-br-[4px] bg-ink px-4 py-2.5 leading-snug text-paper">
+              <p className="max-w-[85%] whitespace-pre-wrap rounded-card rounded-br-[2px] bg-navy px-4 py-2.5 leading-snug text-paper">
                 <span className="sr-only">{s.you}: </span>{m.text}
               </p>
             </div>
           ) : (
             <BotAnswer key={m.id} id={`msg-${m.id}`} a={m.answer} lang={lang} note={m.note} mascot={mascot}
-                       voice={voice} onListen={() => voice.read(m.id, m.answer)}
+                       voice={voice} onListen={() => voice.read(m.id, m.answer)} onAction={runAction}
                        mood={i === msgs.length - 1 && ANSWER_STATES.includes(mood) ? mood : 'idle'} />
           ),
         )}
@@ -197,7 +212,7 @@ export default function Assistant({ lang }: { lang: Lang }) {
       {busy && (
         <div role="status" className="asst-bot flex items-center gap-3">
           <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-gold text-gold-ink"><Icon name="spark-solid" size={14} /></span>
-          <span className="inline-flex items-center gap-3 rounded-[1.25rem] rounded-tl-[4px] bg-paper-2 px-4 py-2.5 text-sm text-ink-2">
+          <span className="panel inline-flex items-center gap-3 rounded-tl-[2px] px-4 py-2.5 text-sm text-ink-2">
             <span aria-hidden="true" className="asst-dots"><i /><i /><i /></span>
             {s.thinking}
           </span>
@@ -208,7 +223,7 @@ export default function Assistant({ lang }: { lang: Lang }) {
       <div ref={dock} data-started={msgs.length > 0 || undefined}
            className="asst-dock sticky z-10 -mx-4 border-t border-line bg-paper/95 px-4 pb-3 pt-3 backdrop-blur lg:mx-0 lg:rounded-card lg:border lg:px-5 lg:pb-4 lg:pt-4">
         <div className={`mb-2 items-baseline justify-between gap-3 ${msgs.length ? 'hidden lg:flex' : 'flex'}`}>
-          <h2 id="sugg-h" className="text-xs font-semibold uppercase tracking-[0.08em] text-ink-2">{s.suggestions}</h2>
+          <h2 id="sugg-h" className="tech-kicker">{s.suggestions}</h2>
           {msgs.length > 0 && (
             <button type="button" onClick={clear} className="tap -my-3 px-1 text-sm text-ink-2 underline underline-offset-4 hover:text-ink">{s.clear}</button>
           )}
@@ -218,7 +233,7 @@ export default function Assistant({ lang }: { lang: Lang }) {
           {s.sugg.map((q) => (
             <li key={q} className="shrink-0 snap-start">
               <button type="button" onClick={() => send(q)} disabled={busy}
-                      className="asst-chip tap inline-flex items-center gap-2 rounded-full border border-line bg-paper px-4 text-sm hover:border-ink hover:bg-paper-2 disabled:opacity-50">
+                      className="asst-chip tap inline-flex items-center gap-2 rounded-card border border-line bg-paper px-4 text-left text-sm hover:border-ink hover:bg-paper-2 disabled:opacity-50">
                 {q}
                 <Icon name="arrow-right" size={14} className="asst-chip-ic text-gold-ink" />
               </button>
@@ -238,7 +253,7 @@ export default function Assistant({ lang }: { lang: Lang }) {
           <div className="asst-composer-btns flex shrink-0 items-center gap-2">
             <MicButton voice={voice} lang={lang} />
             <button type="submit" disabled={busy || !value.trim()}
-                    className="asst-send tap inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-ink px-4 font-semibold text-paper disabled:bg-paper-2 disabled:text-ink-2">
+                    className="asst-send tap inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gold-ink px-4 font-semibold text-paper disabled:bg-paper-2 disabled:text-ink-2">
               <span className="sr-only sm:not-sr-only">{s.send}</span>
               <Icon name="arrow-right" size={18} />
             </button>
@@ -260,31 +275,50 @@ function BotBubble({ children, mascot, mood = 'idle', id, animate }: { children:
       ) : (
         <span aria-hidden="true" className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-gold text-gold-ink"><Icon name="spark-solid" size={14} /></span>
       )}
-      <div className="min-w-0 flex-1 space-y-3">{children}</div>
+      <div className="panel min-w-0 flex-1 space-y-3 rounded-tl-[2px] px-4 py-3">{children}</div>
     </div>
   );
 }
 
-function BotAnswer({ a, lang, note, mascot, mood, id, voice, onListen }: { a: Answer; lang: Lang; note?: string; mascot?: boolean; mood?: MewkaState; id?: string; voice: Voice; onListen(): void }) {
+function BotAnswer({ a, lang, note, mascot, mood, id, voice, onListen, onAction }: { a: Answer; lang: Lang; note?: string; mascot?: boolean; mood?: MewkaState; id?: string; voice: Voice; onListen(): void; onAction(a: Action): void }) {
   const s = STR[lang];
   return (
     <BotBubble mascot={mascot} mood={mood} id={id} animate>
       <span className="sr-only">{s.bot}: </span>
       {note && <p className="text-sm text-warn">{note}</p>}
       {a.text.map((t, i) => <p key={i} className="max-w-[62ch] whitespace-pre-wrap leading-relaxed">{t}</p>)}
+      {a.actions && a.actions.length > 0 && (
+        <div className="pt-1">
+          <p className="tech-kicker">{s.actions}</p>
+          <ul className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            {a.actions.map((act) => (
+              <li key={act.type + (act.type === 'route' ? act.zone + (act.blocked ?? '') : act.id)}>
+                <button type="button" data-action={act.type} onClick={() => onAction(act)}
+                        className={`asst-act tap inline-flex w-full items-center justify-between gap-3 rounded-card border-2 px-4 py-2 text-left text-sm font-semibold sm:w-auto ${
+                          act.type === 'route' ? 'border-ok text-ink hover:bg-paper-2' : 'border-gold text-ink hover:bg-paper-2'}`}>
+                  <span>
+                    <span className={act.type === 'route' ? 'text-ok' : 'text-gold-ink'}>{act.type === 'route' ? s.act_route : s.act_drill}</span>{' '}
+                    {act.label}
+                  </span>
+                  <Icon name="arrow-right" size={16} className="shrink-0" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <ListenButton voice={voice} lang={lang} id={Number(id?.slice(4))} onClick={onListen} />
       {a.fallback && (
         <div className="flex flex-wrap gap-2">
           <a href={`tel:${CONTACT.tel}`} className="tap inline-flex items-center gap-2 rounded-full bg-ink px-4 font-semibold text-paper">
             <Icon name="phone" size={18} />
-            {s.call} <span className="font-normal">{CONTACT.telLabel}</span>
+            {s.call} <span className="font-normal">{contactLabel(lang)}</span>
           </a>
-          <a href={`mailto:${CONTACT.mail}`} className="tap inline-flex items-center rounded-full border border-ink px-4 font-semibold">{s.write}</a>
         </div>
       )}
       {a.sources.length > 0 && (
         <div className="pt-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink-2">{a.sources.length > 1 ? s.sources : s.source}</p>
+          <p className="tech-kicker">{a.sources.length > 1 ? s.sources : s.source}</p>
           <ol className={`mt-2 grid gap-2 ${a.sources.length > 1 ? 'sm:grid-cols-2' : ''}`}>
             {a.sources.map((src, i) => {
               const ext = src.href.startsWith('http');

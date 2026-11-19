@@ -1,5 +1,8 @@
-// Assistant server: POST /api/chat { lang, messages: [{ role, content }] } -> { text: string[], sources: [], fallback? }.
-// Calls Claude with the conversation so far, so the user can keep asking follow-up questions.
+// Assistant server: POST /api/chat { lang, messages: [{ role, content }] }
+//   -> { text: string[], sources: [], fallback?, actions: Action[] }.
+// Calls Claude with the conversation so far, so the crew member can keep asking follow-up questions.
+// The model may propose UI actions with markers; they are parsed and validated here and stripped from the text:
+//   [[ROUTE:<zone>]]  [[ROUTE:<zone>:<stair-aft|stair-fwd>]]  [[DRILL:<id>]]
 // The API key stays here (ANTHROPIC_API_KEY or an `ant auth login` profile); the browser never sees it.
 // In production it also serves the built front end from ../dist.
 import Anthropic from '@anthropic-ai/sdk';
@@ -17,14 +20,100 @@ const CONTACT_MARK = '[[KONTAKT]]';
 
 const LANG_NAME: Record<string, string> = { pl: 'Polish', en: 'English', de: 'German', uk: 'Ukrainian' };
 
-// Frozen system prompt (cached): persona + rules + knowledge. Nothing per-request goes in here.
-const SYSTEM = `You are Mewka, a friendly herring-gull mascot and assistant on a website built for the HackNation 2026 hackathon.
-You talk with visitors in a chat; your replies are also read aloud by a speech synthesiser, so:
-- write plain text only, no Markdown, no lists with symbols, no emoji;
-- keep replies short: usually 1-4 sentences, split into short paragraphs with a blank line;
-- be warm and concrete, and ask a short follow-up question when the request is unclear.
-Base factual answers on the knowledge below. If the answer is not there and you are not sure, say honestly that you do not know,
-do not invent facts, and end the reply with the exact marker ${CONTACT_MARK} so the page shows the contact buttons.
+// Shared ids (assistant/CONTRACT.md). [pl, en] names; de/uk fall back to en.
+const ZONES: Record<string, [string, string]> = {
+  'bridge': ['mostek nawigacyjny', 'navigation bridge'],
+  'cabins-fwd': ['kabiny na dziobie, pokład 3', 'forward cabins, deck 3'],
+  'cabins-mid': ['kabiny na śródokręciu, pokład 3', 'midship cabins, deck 3'],
+  'cabins-aft': ['kabiny na rufie, pokład 3', 'aft cabins, deck 3'],
+  'restaurant': ['restauracja, pokład 4', 'restaurant, deck 4'],
+  'lounge': ['salon, pokład 4', 'lounge, deck 4'],
+  'reclining-lounge': ['sala foteli lotniczych, pokład 4', 'reclining seat lounge, deck 4'],
+  'vehicle-d1': ['pokład samochodowy 1', 'vehicle deck 1'],
+  'vehicle-d2': ['pokład samochodowy 2', 'vehicle deck 2'],
+  'engine-room': ['maszynownia', 'engine room'],
+  'engine-control': ['centrala manewrowo-kontrolna (CMK)', 'engine control room'],
+};
+const STAIRS: Record<string, [string, string]> = {
+  'stair-aft': ['klatka schodowa rufowa', 'aft stairwell'],
+  'stair-fwd': ['klatka schodowa dziobowa', 'forward stairwell'],
+};
+const DRILLS: Record<string, [string, string]> = {
+  'fire': ['pożar', 'fire'],
+  'abandon': ['opuszczenie statku', 'abandon ship'],
+  'mob': ['człowiek za burtą', 'man overboard'],
+  'flooding': ['przeciek i zalanie', 'flooding'],
+  'pollution': ['zanieczyszczenie morza olejem', 'oil pollution'],
+  'blackout': ['zanik zasilania (blackout)', 'blackout'],
+  'medical': ['nagły wypadek medyczny', 'medical emergency'],
+};
+const ACTION_RE = /\[\[(ROUTE|DRILL):([a-z0-9-]+)(?::([a-z-]+))?\]\]/g;
+
+type Action =
+  | { type: 'route'; zone: string; blocked?: 'stair-aft' | 'stair-fwd'; label: string }
+  | { type: 'drill'; id: string; label: string };
+
+const name = (pair: [string, string], lang: string) => (lang === 'pl' ? pair[0] : pair[1]);
+const idList = (m: Record<string, [string, string]>) =>
+  Object.entries(m).map(([id, [pl, en]]) => `- ${id}: ${pl} (${en})`).join('\n');
+
+/** Pull validated action markers out of the reply text (unknown ids are dropped silently). */
+function parseActions(text: string, lang: string): { text: string; actions: Action[] } {
+  const actions: Action[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(ACTION_RE)) {
+    const [, kind, id, extra] = m;
+    const key = m[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (kind === 'ROUTE' && ZONES[id]) {
+      const blocked = extra && STAIRS[extra] ? (extra as 'stair-aft' | 'stair-fwd') : undefined;
+      let label = name(ZONES[id], lang);
+      if (blocked) label += lang === 'pl' ? `, zablokowana ${name(STAIRS[blocked], lang)}` : `, ${name(STAIRS[blocked], lang)} blocked`;
+      actions.push(blocked ? { type: 'route', zone: id, blocked, label } : { type: 'route', zone: id, label });
+    } else if (kind === 'DRILL' && DRILLS[id]) {
+      actions.push({ type: 'drill', id, label: name(DRILLS[id], lang) });
+    }
+  }
+  return { text: text.replace(ACTION_RE, '').replace(/[ \t]+\n/g, '\n'), actions: actions.slice(0, 4) };
+}
+
+// Frozen system prompt (cached): persona + rules + ids + knowledge. Nothing per-request goes in here.
+const SYSTEM = `You are Mewka, a herring-gull mascot and the on-board training assistant for the CREW of MF Jantar Unity,
+a Unity Line ro-pax ferry on the Świnoujście - Ystad route. You help deck, engine and hotel crew and officers
+revise emergency procedures, find evacuation routes on the ship model and run drills.
+
+Style:
+- precise, calm, procedural, safety-first; like a good officer briefing a colleague;
+- reply in Polish unless told otherwise; your replies are read aloud by a speech synthesiser, so write plain text only:
+  no Markdown, no bullet symbols, no emoji; numbered steps may be written as short sentences "Jeden. ... Dwa. ...";
+- keep replies short: usually 2-5 short sentences, split into short paragraphs with a blank line.
+
+Emergencies: when the question describes an emergency (fire, smoke, flooding, man overboard, injury, alarm, blackout),
+first give the immediate actions in order (raise the alarm, report to the bridge with location and type, protect people,
+first response only if safe), then say plainly to follow the master's orders, the ship's Muster List and the SMS procedures.
+Never suggest abandoning ship unless the master orders it. Never invent ship-specific data (numbers, locations, crew roles,
+phone extensions) that is not in the knowledge below; say it must be checked in the ship's documents.
+This is training material based on general SOLAS / IMO practice and a stylised 3D model, not the ship's official documents;
+say so briefly when it matters.
+
+Actions: the app can open an evacuation route or a drill. When useful, add these exact markers at the very end of the reply,
+on their own line (the app turns them into buttons and removes them from the text; never explain the markers):
+[[ROUTE:<zone>]] shows the evacuation route from that zone to the muster station;
+[[ROUTE:<zone>:<stair>]] does the same with that stairwell blocked (e.g. by fire or smoke);
+[[DRILL:<id>]] opens that drill card.
+Use at most one ROUTE and one DRILL marker per reply. Only use the ids below.
+Zones:
+${idList(ZONES)}
+Stairwells:
+${idList(STAIRS)}
+Drills:
+${idList(DRILLS)}
+Examples: "pożar w kabinach na rufie" -> immediate actions, then [[ROUTE:cabins-aft:stair-aft]] and [[DRILL:fire]];
+"droga ewakuacji z maszynowni" -> [[ROUTE:engine-room]]; "ćwiczenie człowiek za burtą" -> [[DRILL:mob]].
+
+If the answer is not in the knowledge and you are not sure, say honestly that you do not know, tell them to ask
+the officer on watch, and end the reply with the exact marker ${CONTACT_MARK} so the app shows the contact to the bridge.
 Never ask for personal data. You are an AI; say so if asked.
 
 <knowledge>
@@ -65,13 +154,14 @@ async function chat(lang: string, messages: Turn[]) {
       { role: 'system', content: `Reply in ${LANG_NAME[lang] ?? 'the language of the last user message'}.` },
     ],
   });
-  if (response.stop_reason === 'refusal') return { text: [], fallback: true };
+  if (response.stop_reason === 'refusal') return { text: [], fallback: true, actions: [] as Action[] };
   let text = '';
   for (const block of response.content) if (block.type === 'text') text += block.text;
   const fallback = text.includes(CONTACT_MARK);
-  text = text.split(CONTACT_MARK).join('').trim();
-  const paras = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-  return { text: paras, fallback };
+  text = text.split(CONTACT_MARK).join('');
+  const parsed = parseActions(text, lang);
+  const paras = parsed.text.trim().split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  return { text: paras, fallback, actions: parsed.actions };
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -112,7 +202,7 @@ createServer(async (req, res) => {
       if (!messages.length) return send(res, 400, { error: 'no question' });
       const lang = typeof body.lang === 'string' ? body.lang : 'pl';
       const r = await chat(lang, messages);
-      return send(res, 200, { text: r.text, sources: [], fallback: r.fallback || !r.text.length });
+      return send(res, 200, { text: r.text, sources: [], fallback: r.fallback || !r.text.length, actions: r.actions });
     } catch (e) {
       if (e instanceof Anthropic.RateLimitError) console.warn('[assistant] rate limited');
       else if (e instanceof Anthropic.APIError) console.error('[assistant] API error', e.status, e.message);
