@@ -8,6 +8,9 @@ import { STR } from './i18n';
 import type { Lang, Stair } from './types';
 import type { ZoneId } from './ship/routes';
 import type { DrillId } from './drills/data';
+// System anty-rzyg: kropki ruchu przy krawędziach ekranu przeciw chorobie morskiej (jak Vehicle Motion Cues w iOS).
+// Zawsze włączony na każdej karcie, bez wyłącznika; sam dobiera intensywność do ruchu statku. Szczegóły: src/motion-cues/.
+import MotionCues from './motion-cues/MotionCues';
 
 const ShipPanel = lazy(() => import('./ship/ShipPanel'));
 const DrillsPanel = lazy(() => import('./drills/DrillsPanel'));
@@ -162,6 +165,8 @@ export default function App({ initialLang }: { initialLang: Lang }) {
           )}
         </section>
       </main>
+
+      <MotionCues lang={lang} />
     </div>
   );
 }
