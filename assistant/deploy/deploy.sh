@@ -10,7 +10,7 @@ DIR=/var/www/jantar-assistant
 npm run build
 ssh "$HOST" "mkdir -p $DIR"
 rsync -az --delete --exclude node_modules --exclude 'server/data' \
-  dist server shared package.json package-lock.json "$HOST:$DIR/"
+  dist server shared src package.json package-lock.json "$HOST:$DIR/"
 rsync -az deploy/jantar-assistant.service "$HOST:/etc/systemd/system/jantar-assistant.service"
 rsync -az deploy/nginx.conf "$HOST:/etc/nginx/sites-available/jantar-assistant"
 ssh "$HOST" bash -s <<REMOTE
