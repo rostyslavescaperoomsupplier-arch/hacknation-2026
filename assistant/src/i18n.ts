@@ -1,5 +1,8 @@
 import type { Lang } from './types';
 
+/** a big shortcut on the assistant's home: sends `q`, or puts `prefill` into the field and focuses it */
+export interface QuickAction { id: 'fire' | 'alarm' | 'route' | 'where'; label: string; sub: string; q?: string; prefill?: string }
+
 // Contact shown when the assistant cannot help: the bridge / officer on watch.
 // TODO: replace with the real internal extension and phone from the ship's contact list (placeholder for the demo).
 export const CONTACT = { tel: '100', telLabel: 'Mostek (wewn.) 100', telLabelEn: 'Bridge (ext.) 100' };
@@ -50,6 +53,16 @@ const pl = {
   rodo_short: 'Nie podawaj danych osobowych.',
   ai_badge: 'Asystent AI · materiał szkoleniowy',
   offline: 'Nie mogę teraz połączyć się z serwerem asystenta. Spróbuj za chwilę albo zapytaj oficera wachtowego.',
+  // home hero (Mewka in the middle of the Asystent tab)
+  hero_hello: 'Cześć, jestem Mewka. Przypomnę procedury awaryjne, pokażę drogę ewakuacji i otworzę ćwiczenie. Napisz albo naciśnij mikrofon i powiedz.',
+  hero_note: 'Jestem programem, nie człowiekiem. W prawdziwym zagrożeniu słuchaj kapitana i Muster List.',
+  qa_title: 'Na skróty',
+  qa: [
+    { id: 'fire', label: 'Pożar — co robić?', sub: 'Pierwsze działania i sygnał', q: 'Pożar na statku: co mam robić?' },
+    { id: 'alarm', label: 'Alarm ogólny', sub: 'Sygnał i co wtedy robić', q: 'Jaki jest sygnał alarmu ogólnego i co wtedy robić?' },
+    { id: 'route', label: 'Droga ewakuacji', sub: 'Do punktu zbiórki', q: 'Pokaż drogę ewakuacji do punktu zbiórki' },
+    { id: 'where', label: 'Gdzie jest…?', sub: 'Osoba albo miejsce', prefill: 'Gdzie jest ' },
+  ] as QuickAction[],
 };
 type Dict = typeof pl;
 
@@ -97,6 +110,15 @@ const en: Dict = {
   rodo_short: 'Please do not share personal data.',
   ai_badge: 'AI assistant · training material',
   offline: "I can't reach the assistant server right now. Try again in a moment or ask the officer on watch.",
+  hero_hello: "Hi, I'm Mewka. I'll go over emergency procedures with you, show an evacuation route and open a drill. Type, or press the microphone and speak.",
+  hero_note: "I'm a program, not a person. In a real emergency, follow the master and the Muster List.",
+  qa_title: 'Shortcuts',
+  qa: [
+    { id: 'fire', label: 'Fire: what to do?', sub: 'First actions and the signal', q: 'Fire on board: what do I do?' },
+    { id: 'alarm', label: 'General alarm', sub: 'The signal and what to do', q: 'What is the general alarm signal and what do I do then?' },
+    { id: 'route', label: 'Evacuation route', sub: 'To the muster station', q: 'Show the evacuation route to the muster station' },
+    { id: 'where', label: 'Where is…?', sub: 'A person or a place', prefill: 'Where is ' },
+  ],
 };
 
 // de / uk fall back to English (contract: Polish first, English second).

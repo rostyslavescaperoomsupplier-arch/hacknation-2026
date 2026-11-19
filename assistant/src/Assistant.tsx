@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import type { Action, Answer, Lang, Stair, Turn } from './types';
-import { STR, CONTACT, contactLabel } from './i18n';
+import { STR, CONTACT, contactLabel, type QuickAction } from './i18n';
 import { askStream, paragraphs } from './adapter';
 import { MewkaReact } from '../../mewka/src/mewka/MewkaReact';
 import type { MewkaState } from '../../mewka/src';
@@ -9,6 +9,9 @@ import Icon from './icons/Icon';
 import { useVoice, type Voice } from './voice/useVoice';
 import { ListenButton, MicButton, VoiceBar } from './ui/Voice';
 import { trackKeyboardInset } from './lib/keyboard-inset';
+import QuickActions from './home/QuickActions';
+import { morph } from './home/morph';
+import './home/home.css';
 
 /** `streamed`: the text was already shown growing in the live bubble (no second entrance animation / scroll jump) */
 type Msg = { id: number; role: 'user'; text: string } | { id: number; role: 'bot'; answer: Answer; note?: string; streamed?: boolean };
@@ -60,7 +63,14 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
   const userScrollAt = useRef(0);
 
   // ---- Mewka state machine: purely visual, every state also exists as text/ARIA ----
-  const [mascot, setMascot] = useState(false);
+  // decided before the first paint, so the big bird's box is there from the start (no layout shift)
+  const [mascot] = useState(mascotEnabled);
+  /** home phase: Mewka big in the middle until the first question; "clear" brings it back */
+  const [hero, setHero] = useState(true);
+  /** a question is on its way (set synchronously: the hero morph commits the visible state a frame later) */
+  const inflight = useRef(false);
+  /** element the big Mewka aims at instead of the newest answer (a hovered / focused shortcut in the hero) */
+  const aim = useRef<Element | null>(null);
   const [mood, setMoodState] = useState<MewkaState>('idle');
   const moodRef = useRef<MewkaState>('idle');
   const timers = useRef<number[]>([]);
@@ -79,6 +89,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
 
   /** what the big Mewka aims at: the action buttons of the newest answer, then the contact link, else the answer */
   function pointTarget(): Element | null {
+    if (aim.current?.isConnected) return aim.current;
     const last = [...msgs].reverse().find((m) => m.role === 'bot');
     const box = last && document.getElementById(`msg-${last.id}`);
     return box?.querySelector('[data-action]') ?? box?.querySelector('a[href^="tel:"]') ?? box?.querySelector('ol a') ?? box ?? null;
@@ -99,16 +110,32 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
 
   async function send(q: string) {
     const query = q.trim();
-    if (!query || busy) return;
+    if (!query || busy || inflight.current) return;
+    inflight.current = true;
+    aim.current = null;
     voice.onUserInput();
-    setMsgs((m) => [...m, { id: ++seq, role: 'user', text: query }]);
-    setValue('');
     history.current = [...history.current, { role: 'user', content: query }];
-    setBusy(true);
-    play(['thinking']);
+    const userId = ++seq;
+    const gen = genRef.current;
+    /** the visible start (question bubble, busy, thinking) has been committed; with the hero morph that is a frame or
+     *  more later, and nothing of the answer may land before it (a fast local answer would otherwise come first) */
+    let ready = false;
+    let markReady = () => {};
+    const shown = new Promise<void>((res) => { markReady = res; });
+    const start = () => {
+      ready = true;
+      markReady();
+      if (gen !== genRef.current) return; // cleared before the morph committed
+      setHero(false);
+      setMsgs((m) => [...m, { id: userId, role: 'user', text: query }]);
+      setValue('');
+      setBusy(true);
+      play(['thinking']);
+    };
+    // first question: Mewka flies from the middle of the page up into the chat header (same element, resized)
+    if (hero) morph(start); else start();
     const id = ++seq;
     pendingId.current = id;
-    const gen = genRef.current;
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     // voice mode + read aloud: speak sentence by sentence while the answer streams in
@@ -119,7 +146,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
     const a = await askStream(history.current, lang, {
       signal: ctrl.signal,
       onDelta: (text) => {
-        if (gen !== genRef.current) return;
+        if (gen !== genRef.current || !ready) return; // the cumulative text arrives again with the next chunk
         if (!text) { streamed = false; setLive(null); play(['thinking']); return; } // falling back to the JSON endpoint
         setLive({ id, text });
         const voiceTalks = voiced && voiceRef.current.pushStreamText(id, text);
@@ -132,6 +159,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
       },
     });
     if (abortRef.current === ctrl) abortRef.current = null;
+    await shown;
     if (gen !== genRef.current) return; // the conversation was cleared meanwhile
     if (!streamed) await new Promise((r) => setTimeout(r, Math.max(0, 280 - (performance.now() - started))));
     // the history only keeps complete answers; a failed / stopped question is dropped (the user can simply ask again)
@@ -140,12 +168,14 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
     setLive(null);
     if (a.aborted) {
       if (a.text.length) setMsgs((m) => [...m, { id, role: 'bot', answer: a, note: ui.stopped, streamed: true }]);
+      inflight.current = false;
       setBusy(false);
       voiceRef.current.endStream(id, null);
       play(['idle']);
       return;
     }
     setMsgs((m) => [...m, { id, role: 'bot', answer: a, streamed }]);
+    inflight.current = false;
     setBusy(false);
     // voice mode: the answer is read aloud and the gull talks per sentence instead of the beats below
     if (voiced ? voiceRef.current.endStream(id, a) : voiceRef.current.onAnswer(id, a)) return;
@@ -155,8 +185,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
   }
 
   useEffect(() => {
-    if (!mascotEnabled()) return;
-    setMascot(true);
+    if (!mascot) return;
     let greeted = true;
     try { greeted = sessionStorage.getItem('fs-mewka-greeted') === '1'; sessionStorage.setItem('fs-mewka-greeted', '1'); } catch { /* private mode */ }
     if (!greeted && !new URLSearchParams(location.search).get('q')) play(['greet', T.greet]);
@@ -248,43 +277,90 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
     const streaming = abortRef.current;
     abortRef.current = null;
     streaming?.abort();
-    if (streaming) { voice.endStream(pendingId.current, null); setBusy(false); setLive(null); }
+    inflight.current = false;
     voice.onUserInput();
-    setMsgs([]);
     history.current = [];
-    play(['idle']);
-    input.current?.focus();
+    aim.current = null;
+    // back to the home: Mewka flies back to the middle and says hello again
+    morph(() => {
+      if (streaming) { voice.endStream(pendingId.current, null); setBusy(false); setLive(null); }
+      setMsgs([]);
+      setHero(true);
+      play(['greet', T.greet]);
+    });
+    input.current?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+  }
+
+  /** a home shortcut: ask right away, or start the question in the field ("Gdzie jest ...") */
+  function pickQuick(a: QuickAction) {
+    if (a.q) { send(a.q); return; }
+    const t = a.prefill ?? '';
+    setValue(t);
+    const el = input.current;
+    if (!el) return;
+    el.focus();
+    requestAnimationFrame(() => el.setSelectionRange(t.length, t.length));
+    play(['listening']);
+  }
+
+  /** hero: the big Mewka points at the shortcut under the pointer / keyboard focus */
+  function aimAt(el: HTMLElement) {
+    if (!hero || busy) return;
+    aim.current = el;
+    play(['pointing', T.point]);
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <header className="flex items-end gap-3 pb-1 sm:gap-4 sm:pb-2">
+    <div className="asst flex flex-col gap-4" data-hero={hero || undefined}>
+      {/* the one big (3D) Mewka of the page: the same element in the hero and in the chat header, only resized */}
+      <header className="asst-top">
         {mascot && (
-          <span className="asst-head shrink-0">
+          <span className="asst-stage" aria-hidden="true">
             <MewkaReact state={mood} size="xl" pointTarget={mood === 'pointing' ? pointTarget() : null} />
+            {/* night mode: brightness -> dim red, so the white bird does not glow (home.css) */}
+            <svg width="0" height="0" className="absolute" focusable="false">
+              <filter id="asst-night-red" colorInterpolationFilters="sRGB">
+                <feColorMatrix type="matrix" values=".121 .408 .041 0 0  .036 .122 .012 0 0  .013 .043 .004 0 0  0 0 0 1 0" />
+              </filter>
+            </svg>
           </span>
         )}
-        <div className="min-w-0 flex-1 pb-2">
+        <div className="asst-titles">
           <p className="tech-kicker">{s.ai_badge}</p>
-          <h1 className="tech-title mt-1 text-h2">{s.title}</h1>
+          <h1 className="asst-title tech-title mt-1 text-h2">{s.title}</h1>
         </div>
-        {msgs.length > 0 && (
+        {!hero && (
           <button type="button" onClick={clear}
-                  className="tap mb-1 inline-flex shrink-0 items-center gap-2 self-end rounded-card border border-line bg-paper px-3 text-sm font-semibold text-ink-2 hover:border-ink hover:text-ink">
+                  className="asst-clear tap inline-flex shrink-0 items-center gap-2 rounded-card border border-line bg-paper px-3 text-sm font-semibold text-ink-2 hover:border-ink hover:text-ink">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden="true" focusable="false">
               <path d="M5 12a7 7 0 1 0 2.1-5" /><path d="M4.5 3.5v4h4" />
             </svg>
-            {s.clear}
+            <span className="max-sm:sr-only">{s.clear}</span>
           </button>
         )}
       </header>
 
+      {/* her greeting: a speech bubble under the big bird on the home, the first bubble of the chat afterwards */}
+      <div className="asst-greet">
+        {hero ? (
+          <div className="asst-bubble">
+            <p className="leading-relaxed">{s.hero_hello}</p>
+            <p className="asst-bubble-note">{s.hero_note}</p>
+          </div>
+        ) : (
+          <BotBubble mascot={mascot}>
+            <p className="max-w-[62ch] leading-relaxed">{s.hero_hello}</p>
+            <p className="text-sm text-ink-2">{s.hero_note}</p>
+          </BotBubble>
+        )}
+      </div>
+
+      {hero && <QuickActions items={s.qa} title={s.qa_title} disabled={busy} onPick={pickQuick} onAim={aimAt} />}
+
       {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events -- delegated listener on real links */}
       <div role="log" aria-live="polite" aria-relevant="additions" aria-label={s.log_label} aria-busy={busy}
-           onClick={onLogClick} className="flex flex-col gap-5">
-        <BotBubble mascot={mascot}>
-          <p>{s.hello}</p>
-        </BotBubble>
+           onClick={onLogClick} className="asst-log flex flex-col gap-5">
         {msgs.map((m, i) =>
           m.role === 'user' ? (
             <div key={m.id} className="asst-user flex justify-end">
@@ -320,13 +396,13 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
       )}
       <div ref={end} className="-mt-4" />
 
-      <div ref={dock} data-started={msgs.length > 0 || undefined}
+      <div ref={dock} data-started={!hero || undefined}
            className="asst-dock sticky z-10 -mx-6 border-t border-line bg-paper px-6 pb-3 pt-3 lg:mx-0 lg:rounded-card lg:border lg:px-5 lg:pb-4 lg:pt-4">
-        <div className={`mb-2 items-baseline justify-between gap-3 ${msgs.length ? 'hidden lg:flex' : 'flex'}`}>
+        <div className={`mb-2 items-baseline justify-between gap-3 ${hero ? 'hidden' : 'hidden lg:flex'}`}>
           <h2 id="sugg-h" className="tech-kicker">{s.suggestions}</h2>
         </div>
         <ul aria-labelledby="sugg-h" onFocus={(e) => (e.target as HTMLElement).scrollIntoView?.({ block: 'nearest', inline: 'nearest' })}
-            className={`asst-chips -mx-6 mb-3 snap-x snap-proximity scroll-px-6 gap-2 overflow-x-auto overscroll-x-contain px-6 pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-wrap lg:px-0 ${msgs.length ? 'hidden lg:flex' : 'flex'}`}>
+            className={`asst-chips -mx-6 mb-3 snap-x snap-proximity scroll-px-6 gap-2 overflow-x-auto overscroll-x-contain px-6 pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-wrap lg:px-0 ${hero ? 'hidden' : 'hidden lg:flex'}`}>
           {s.sugg.map((q) => (
             <li key={q} className="shrink-0 snap-start">
               <button type="button" onClick={() => send(q)} disabled={busy}

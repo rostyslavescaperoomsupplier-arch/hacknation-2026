@@ -1,0 +1,119 @@
+/* Assistant home: Mewka is the centre of the empty Asystent tab, then moves (same element, never remounted) into a
+   compact header once the conversation starts. Static styles are the final state of each phase; the move itself is a
+   View Transition (morph.ts), instant under reduced motion. Tokens only; the motion-cue dots keep the 24 px gutter. */
+
+/* ---- the bird's box: always reserved (no shift when the 3D model replaces the SVG) ---- */
+.asst-top { display: flex; align-items: flex-end; gap: 0.75rem; }
+.asst-stage {
+  --bird: 96px;
+  position: relative; isolation: isolate; flex: none; display: block;
+  inline-size: var(--bird); block-size: var(--bird);
+  /* the 3D canvas is 1.5x the box: keep its wing tips off the dot band */
+  margin-inline-start: calc(var(--bird) * 0.1);
+}
+.asst-stage .mewka { inline-size: 100%; block-size: 100%; }
+@media (min-width: 600px) { .asst-stage { --bird: 120px; } }
+.asst-titles { min-width: 0; flex: 1; padding-bottom: 0.5rem; }
+.asst-clear { align-self: flex-end; margin-bottom: 0.25rem; }
+/* phones in the chat: bird + one-line title + icon-only clear button (its words stay as the accessible name);
+   the AI badge is said in the greeting right below ("Jestem programem, nie człowiekiem") */
+@media (max-width: 639.98px) {
+  .asst:not([data-hero]) .asst-titles .tech-kicker { display: none; }
+  .asst:not([data-hero]) .asst-title { font-size: 1.375rem; }
+  .asst:not([data-hero]) .asst-titles { padding-bottom: 1rem; }
+}
+
+/* ---- hero (no messages yet) ---- */
+.asst[data-hero] .asst-top { flex-direction: column; align-items: center; text-align: center; gap: 0.25rem; }
+/* the bird and her greeting are the heading of the home (the bubble also says she is a program, the app bar names
+   the app); the titles stay for screen readers and come back next to the compact bird in the chat */
+.asst[data-hero] .asst-titles { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.asst[data-hero] .asst-stage {
+  /* phones 200..240 px, desktop up to 300 px; shorter screens give the bird less so the composer stays in reach */
+  --bird: clamp(168px, min(54vw, 25svh), 240px);
+  margin: 0.75rem auto 0.375rem;
+}
+@media (min-width: 1024px) { .asst[data-hero] .asst-stage { --bird: clamp(220px, 29svh, 300px); margin-top: 1.5rem; } }
+
+/* sky disc behind her: a technical-drawing circle with a horizon, so a flying gull has air around her */
+.asst-stage::before, .asst-stage::after {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  opacity: 0; transition: opacity 0.3s ease;
+}
+.asst-stage::before {
+  inset: -8%; border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--c-ink) 22%, transparent);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--c-paper) 85%, transparent), transparent);
+}
+.asst-stage::after {
+  left: -30%; right: -30%; top: 74%; height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--c-ink) 30%, transparent) 25%, color-mix(in srgb, var(--c-ink) 30%, transparent) 75%, transparent);
+}
+.asst[data-hero] .asst-stage::before, .asst[data-hero] .asst-stage::after { opacity: 1; }
+
+/* her greeting: a speech bubble whose tail points up at her */
+.asst-bubble {
+  position: relative; padding: 0.75rem 1rem;
+  background: var(--c-paper); border: 1px solid var(--c-line); border-radius: 1rem;
+  box-shadow: 0 16px 34px -28px color-mix(in srgb, var(--c-ink) 60%, transparent);
+}
+.asst-bubble::before {
+  content: ''; position: absolute; top: -7px; left: 50%; width: 13px; height: 13px;
+  background: var(--c-paper); border-left: 1px solid var(--c-line); border-top: 1px solid var(--c-line);
+  transform: translateX(-50%) rotate(45deg); border-top-left-radius: 3px;
+}
+.asst-bubble-note { margin-top: 0.375rem; font-size: 0.8125rem; line-height: 1.4; color: var(--c-ink-2); }
+
+/* ---- quick actions ---- */
+.asst-qa { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+/* one centred column for the bubble, the shortcuts and the composer */
+.asst[data-hero] :is(.asst-bubble, .asst-qa-wrap) { width: 100%; max-width: 38rem; margin-inline: auto; }
+@media (min-width: 1024px) { .asst[data-hero] .asst-dock { width: 100%; max-width: 38rem; margin-inline: auto; } }
+/* the (still empty) chat log must exist for screen readers, but takes no room */
+.asst[data-hero] .asst-log { margin-top: -1rem; }
+@media (min-width: 600px) { .asst-qa { gap: 0.75rem; } }
+.asst-qa > li { display: flex; animation: asst-rise 0.4s var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * 60ms + 120ms); }
+.asst-qa-btn {
+  flex: 1; display: flex; align-items: center; gap: 0.75rem; min-height: var(--tap-lg); min-width: 0;
+  padding: 0.5rem 0.875rem; text-align: left; font-weight: 600; line-height: 1.2; color: var(--c-ink);
+  background: var(--c-paper); border: 1px solid color-mix(in srgb, var(--c-ink) 55%, var(--c-paper)); border-radius: var(--radius-card);
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s var(--ease-out);
+}
+.asst-qa-btn:active:not(:disabled) { transform: scale(0.97); }
+.asst-qa-btn:disabled { opacity: 0.5; }
+@media (hover: hover) { .asst-qa-btn:not(:disabled):hover { border-color: var(--c-ink); background: var(--c-paper-2); } }
+.asst-qa-ic { flex: none; }
+.asst-qa-btn[data-kind='fire'] .asst-qa-ic { color: var(--c-danger); }
+.asst-qa-btn[data-kind='alarm'] .asst-qa-ic { color: var(--c-gold-ink); }
+.asst-qa-btn[data-kind='route'] .asst-qa-ic { color: var(--c-ok); }
+.asst-qa-btn[data-kind='where'] .asst-qa-ic { color: var(--c-teal); }
+.asst-qa-label { display: block; }
+.asst-qa-sub { display: none; margin-top: 0.125rem; font-size: 0.8125rem; font-weight: 400; color: var(--c-ink-2); }
+@media (min-width: 600px) { .asst-qa-btn { padding-block: 0.625rem; } .asst-qa-sub { display: block; } }
+
+/* ---- composer in the hero: in the flow under the shortcuts, the mic is the headline control ---- */
+.asst[data-hero] .asst-dock { position: static; }
+.asst[data-hero] .asst-composer { padding-block: 0.375rem; }
+.asst[data-hero] .vx-mic { width: 3.25rem; height: 3.25rem; }
+.asst[data-hero] .vx-mic:not([data-on]) { background: var(--c-gold-ink); border-color: var(--c-gold-ink); color: var(--c-on-strong); }
+@media (hover: hover) { .asst[data-hero] .vx-mic:not([data-on]):hover { background: var(--c-gold-ink); filter: brightness(1.08); } }
+:root[data-theme="night"] .asst[data-hero] .vx-mic:not([data-on]) { background: #2a1404; color: var(--c-gold-ink); box-shadow: inset 0 0 0 2px var(--c-gold-ink); }
+
+/* ---- night mode: the big bird is a large white surface, so it is mapped to dim red like the 3D ship
+   (luminance -> red, no blue or green light; the filter is the hidden <svg> in Assistant.tsx) ---- */
+.asst-stage .mewka { filter: var(--canvas-filter); } /* dark: dimmed a touch like the ship */
+:root[data-theme="night"] .asst-stage .mewka { filter: url(#asst-night-red); }
+
+/* ---- the morph (View Transition names exist only while morphing) ---- */
+html[data-asst-morph] .asst-stage { view-transition-name: asst-bird; }
+html[data-asst-morph] .asst-titles { view-transition-name: asst-title; }
+html[data-asst-morph] .asst-greet { view-transition-name: asst-greet; }
+html[data-asst-morph] .asst-dock { view-transition-name: asst-dock; }
+::view-transition-group(asst-bird), ::view-transition-group(asst-title),
+::view-transition-group(asst-greet), ::view-transition-group(asst-dock) {
+  animation-duration: 480ms; animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-old(asst-greet), ::view-transition-new(asst-greet) { animation-duration: 260ms; }
+
+/* the composer pill carries the focus ring; the field inside gets no second (halo) box */
+.asst-composer input:focus-visible { box-shadow: none; }
