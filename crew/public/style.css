@@ -171,3 +171,4 @@ dialog .close { float: right; border: 0; font-size: 20px; padding: 0 8px; }
 .empty { color: var(--ink-2); padding: 12px 0; }
 button.link { border: 0; background: none; color: var(--accent); padding: 8px 0 0; }
 button.link:hover { background: none; text-decoration: underline; }
+.uid { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }

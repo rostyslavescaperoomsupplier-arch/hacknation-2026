@@ -6,10 +6,10 @@ const BASE = process.env.CREW_URL || `http://localhost:${process.env.PORT || 879
 const INTERVAL = Number(process.env.INTERVAL_MS || 2500);
 
 const get = async (p: string) => (await fetch(BASE + p)).json();
-const crew = (await get('/api/crew')) as { badge: string }[];
+const crew = ((await get('/api/crew')) as { rfid_uid: string | null }[]).filter((c) => c.rfid_uid);
 const terminals = (await get('/api/terminals')) as { code: string; room_name: string }[];
 const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
-console.log(`[terminals] ${terminals.length} terminali, ${crew.length} kart, odbicie co ${INTERVAL} ms → ${BASE}`);
+console.log(`[terminals] ${terminals.length} terminali, ${crew.length} nośników RFID, odbicie co ${INTERVAL} ms → ${BASE}`);
 
 setInterval(async () => {
   const term = pick(terminals);
@@ -18,7 +18,7 @@ setInterval(async () => {
     const res = await fetch(BASE + '/api/checkin', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ badge: pick(crew).badge, terminal: term.code, direction }),
+      body: JSON.stringify({ rfid: pick(crew).rfid_uid, terminal: term.code, direction }),
     });
     const c = await res.json();
     if (!res.ok) throw new Error(c.error);

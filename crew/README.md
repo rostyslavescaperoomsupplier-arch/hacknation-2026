@@ -24,7 +24,7 @@ Przy pierwszym starcie z pustą bazą przykładowe dane generują się same. Baz
 |---|---|
 | `decks` | pokłady statku (poziom, nazwa) |
 | `rooms` | pomieszczenia: kod, nazwa, rola (Nawigacja, Maszynownia, Kwatery…), opis, pokład, powierzchnia m², bezpieczna pojemność, czy dostęp jest ograniczony |
-| `crew` | załoga: numer karty, imię, nazwisko, stanowisko, dział, wachta, narodowość, data urodzenia, telefon wewnętrzny, kabina, data zaokrętowania |
+| `crew` | załoga: numer pracownika (`badge`), **UID nośnika RFID** (`rfid_uid`, unikalny) i typ nośnika (`rfid_type`: `karta` albo `opaska`), imię, nazwisko, stanowisko, dział, wachta, narodowość, data urodzenia, telefon wewnętrzny, kabina, data zaokrętowania |
 | `terminals` | terminale (czytniki kart) i pomieszczenie, w którym wiszą |
 | `checkins` | log odbić: kto, który terminal, które pomieszczenie, `in`/`out`, kiedy |
 
@@ -54,7 +54,7 @@ Kontenerowiec „MS Brda”: 4 pokłady, 24 pomieszczenia, 28 terminali i 45 os�
 | GET | `/api/terminals` | lista terminali |
 | GET | `/api/activity` | odbicia na godzinę, ostatnie 24 h |
 | GET | `/api/alerts` | obsada stanowisk, praca w pojedynkę, czas od ostatniego odbicia |
-| POST | `/api/checkin` | wysyła go fizyczny terminal: `{ "badge": "B-1001", "terminal": "T-D4-01-A", "direction": "in" }` (`direction`: `in` albo `out`, domyślnie `in`) |
+| POST | `/api/checkin` | wysyła go fizyczny terminal po odczytaniu karty lub opaski: `{ "rfid": "04:A3:1F:5B:C2:6E:80", "terminal": "T-D4-01-A", "direction": "in" }`. UID może przyjść w dowolnym formacie (`04a31f5bc26e80`, `04-A3-…`), bo porównywane są same cyfry hex. `direction` to `in` albo `out`, domyślnie `in`. Nieznany UID daje 404 |
 
 ## Panel w przeglądarce (`public/`)
 

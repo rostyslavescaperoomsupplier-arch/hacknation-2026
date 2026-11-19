@@ -156,8 +156,10 @@ export function seed(db: DatabaseSync, now = new Date()) {
         terminalsOf[id].push(Number(insTerm.run(`T-${code}-${'AB'[t]}`, id).lastInsertRowid));
     }
 
-    const insCrew = db.prepare(`INSERT INTO crew (badge, first_name, last_name, rank, department, shift, nationality,
-      birth_date, phone_ext, cabin_id, embarked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insCrew = db.prepare(`INSERT INTO crew (badge, rfid_uid, rfid_type, first_name, last_name, rank, department, shift,
+      nationality, birth_date, phone_ext, cabin_id, embarked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    // 7-byte UID like NTAG/MIFARE tags: "04:XX:XX:XX:XX:XX:XX"
+    const uid = () => ['04', ...Array.from({ length: 6 }, () => Math.floor(r() * 256).toString(16).padStart(2, '0'))].join(':').toUpperCase();
     interface Member { id: number; shift: string; work: Weights; cabin: number; mess: number }
     const members: Member[] = [];
     let n = 0, blockA = 0;
@@ -174,8 +176,10 @@ export function seed(db: DatabaseSync, now = new Date()) {
         const embarked = new Date(now.getTime() - (7 + Math.floor(r() * 110)) * 86400_000);
         const cabin = officer ? roomId['D3-01'] : (blockA++ % 2 === 0 ? roomId['D3-02'] : roomId['D3-03']);
         const shift = shifts[i % shifts.length];
+        // wristbands where hands get dirty or wet (engine room, galley), cards elsewhere
+        const tagType = dept === 'Maszynownia' || dept === 'Hotel' ? 'opaska' : 'karta';
         const id = Number(insCrew.run(
-          `B-${String(1000 + n)}`, pick(female ? nm.f : nm.m), last, rank, dept, shift, nat,
+          `B-${String(1000 + n)}`, uid(), tagType, pick(female ? nm.f : nm.m), last, rank, dept, shift, nat,
           birth.toISOString().slice(0, 10), String(200 + n), cabin, embarked.toISOString().slice(0, 10),
         ).lastInsertRowid);
         // the first AB of each watch is the bridge lookout

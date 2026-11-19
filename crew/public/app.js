@@ -186,7 +186,8 @@ async function loadCrew() {
     <td>${esc(c.department)}</td><td>${esc(c.shift)}</td>
     <td>${c.room_name ? esc(c.room_name) : '<span class="ashore">poza statkiem / wyszedł</span>'}</td>
     <td title="${esc(c.since)}">${ago(c.since)}</td><td>${esc(c.nationality)}</td><td>${esc(c.birth_date)}</td>
-    <td class="num">${esc(c.phone_ext)}</td><td>${esc(c.cabin)}</td></tr>`).join('');
+    <td class="num">${esc(c.phone_ext)}</td><td>${esc(c.cabin)}</td>
+    <td>${c.rfid_type ? esc(c.rfid_type) : '<span class="ashore">nie wydano</span>'}</td><td class="uid">${esc(c.rfid_uid ?? '–')}</td></tr>`).join('');
 }
 let crewTimer;
 $('#crewFilter').addEventListener('input', () => { clearTimeout(crewTimer); crewTimer = setTimeout(loadCrew, 200); });

@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS rooms (
 
 CREATE TABLE IF NOT EXISTS crew (
   id          INTEGER PRIMARY KEY,
-  badge       TEXT    NOT NULL UNIQUE,   -- card id read by the terminal
+  badge       TEXT    NOT NULL UNIQUE,   -- human-readable crew number, e.g. "B-1001"
+  rfid_uid    TEXT,                      -- UID of the RFID card/wristband, e.g. "04:A3:1F:5B:C2:6E:80" (unique, see index)
+  rfid_type   TEXT    CHECK (rfid_type IN ('karta', 'opaska')),
   first_name  TEXT    NOT NULL,
   last_name   TEXT    NOT NULL,
   rank        TEXT    NOT NULL,          -- Kapitan, Starszy mechanik, Marynarz, ...
@@ -82,5 +84,10 @@ export function openDb(file: string): DatabaseSync {
   if (!cols.has('min_staff')) db.exec('ALTER TABLE rooms ADD COLUMN min_staff INTEGER NOT NULL DEFAULT 0');
   if (!cols.has('staff_hours')) db.exec("ALTER TABLE rooms ADD COLUMN staff_hours TEXT NOT NULL DEFAULT '00-24'");
   if (!cols.has('hazardous')) db.exec('ALTER TABLE rooms ADD COLUMN hazardous INTEGER NOT NULL DEFAULT 0');
+  const crewCols = new Set((db.prepare('PRAGMA table_info(crew)').all() as { name: string }[]).map((c) => c.name));
+  if (!crewCols.has('rfid_uid')) db.exec('ALTER TABLE crew ADD COLUMN rfid_uid TEXT');
+  if (!crewCols.has('rfid_type')) db.exec("ALTER TABLE crew ADD COLUMN rfid_type TEXT CHECK (rfid_type IN ('karta', 'opaska'))");
+  // one RFID tag = one person (several NULLs allowed: tag not issued yet)
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS crew_rfid_uid ON crew (rfid_uid)');
   return db;
 }

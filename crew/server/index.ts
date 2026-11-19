@@ -6,7 +6,7 @@
 //   GET  /api/terminals          terminals (for the check-in form)
 //   GET  /api/activity           check-ins per hour, last 24 h
 //   GET  /api/alerts             staffing of key rooms, lone workers in hazardous rooms, time since last check-in
-//   POST /api/checkin            { badge, terminal, direction? }  - sent by a physical terminal on a card tap
+//   POST /api/checkin            { rfid, terminal, direction? }  - sent by a physical terminal when a card/wristband is read
 // The browser dashboard only reads; check-ins come from the terminals (or `npm run simulate` for a demo).
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync, statSync } from 'node:fs';
@@ -41,7 +41,7 @@ GROUP BY r.id
 ORDER BY d.level DESC, r.code`;
 
 const CREW_SQL = `
-SELECT cr.id, cr.badge, cr.first_name, cr.last_name, cr.rank, cr.department, cr.shift, cr.nationality,
+SELECT cr.id, cr.badge, cr.rfid_uid, cr.rfid_type, cr.first_name, cr.last_name, cr.rank, cr.department, cr.shift, cr.nationality,
        cr.birth_date, cr.phone_ext, cr.embarked_at, cab.name AS cabin,
        r.id AS room_id, r.code AS room_code, r.name AS room_name, l.since
 FROM crew cr
@@ -76,9 +76,13 @@ function activity() {
 }
 
 function checkin(body: any) {
-  const crew = db.prepare('SELECT id FROM crew WHERE badge = ?').get(String(body.badge ?? '')) as { id: number } | undefined;
+  // readers format UIDs differently ("04a31f5bc26e80", "04-A3-1F-..."): compare hex digits only
+  const uid = String(body.rfid ?? '').toUpperCase().replace(/[^0-9A-F]/g, '');
+  const crew = uid
+    ? db.prepare("SELECT id FROM crew WHERE REPLACE(rfid_uid, ':', '') = ?").get(uid) as { id: number } | undefined
+    : undefined;
   const term = db.prepare('SELECT id, room_id FROM terminals WHERE code = ?').get(String(body.terminal ?? '')) as { id: number; room_id: number } | undefined;
-  if (!crew) throw new HttpError(404, 'Nieznana karta (badge)');
+  if (!crew) throw new HttpError(404, 'Nieznany identyfikator RFID');
   if (!term) throw new HttpError(404, 'Nieznany terminal');
   const direction = body.direction === 'out' ? 'out' : 'in';
   db.prepare('INSERT INTO checkins (crew_id, terminal_id, room_id, direction, at) VALUES (?, ?, ?, ?, ?)')
@@ -131,7 +135,7 @@ createServer(async (req, res) => {
       }
       if (p === '/api/crew') {
         const q = `%${url.searchParams.get('q') ?? ''}%`;
-        return send(res, 200, db.prepare(CREW_SQL + ` WHERE cr.first_name || ' ' || cr.last_name || ' ' || cr.rank || ' ' || cr.badge LIKE ?
+        return send(res, 200, db.prepare(CREW_SQL + ` WHERE cr.first_name || ' ' || cr.last_name || ' ' || cr.rank || ' ' || cr.badge || ' ' || IFNULL(cr.rfid_uid, '') LIKE ?
           ORDER BY cr.department, cr.id`).all(q));
       }
       if (p === '/api/terminals') return send(res, 200, db.prepare(`SELECT t.code, r.code AS room_code, r.name AS room_name
