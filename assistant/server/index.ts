@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clientIp, corsOrigin, originAllowed, takeToken, tokenOk, validateChat, type ChatInput } from './guard.ts';
 import { FAKE, MODEL, ask, askStream, describeError, knowledgeStats } from './claude.ts';
+import { attachCrewVideoWebSocket } from './crew-video.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -124,7 +125,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   res.end(readFileSync(file));
 }
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   const t0 = Date.now();
   try {
     const url = (req.url || '/').split('?')[0];
@@ -156,4 +157,7 @@ createServer(async (req, res) => {
     console.error('[assistant] unhandled:', e instanceof Error ? e.message : e);
     send(res, 500, { error: 'internal error' });
   }
-}).listen(PORT, () => console.log(`[assistant] http://localhost:${PORT}  model=${MODEL}${FAKE ? '  FAKE client' : ''}`));
+});
+// crew video chat between terminals (signalling WebSocket at /crew-video-ws, from branch videochat)
+attachCrewVideoWebSocket(server);
+server.listen(PORT, () => console.log(`[assistant] http://localhost:${PORT}  model=${MODEL}${FAKE ? '  FAKE client' : ''}`));

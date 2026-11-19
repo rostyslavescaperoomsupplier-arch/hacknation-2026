@@ -9,6 +9,7 @@ import Icon from './icons/Icon';
 import { useVoice, type Voice } from './voice/useVoice';
 import { ListenButton, MicButton, VoiceBar } from './ui/Voice';
 import { trackKeyboardInset } from './lib/keyboard-inset';
+import CrewVideoChat from './crew/CrewVideoChat';
 
 /** `streamed`: the text was already shown growing in the live bubble (no second entrance animation / scroll jump) */
 type Msg = { id: number; role: 'user'; text: string } | { id: number; role: 'bot'; answer: Answer; note?: string; streamed?: boolean };
@@ -269,6 +270,8 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
           <h1 className="tech-title mt-1 text-h2">{s.title}</h1>
         </div>
       </header>
+
+      <CrewVideoChat lang={lang} />
 
       {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events -- delegated listener on real links */}
       <div role="log" aria-live="polite" aria-relevant="additions" aria-label={s.log_label} aria-busy={busy}
