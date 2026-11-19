@@ -98,7 +98,7 @@ export default function App({ initialLang }: { initialLang: Lang }) {
 
   return (
     <div className="app min-h-dvh" data-typing={typing || undefined}>
-      <header className="app-header sticky top-0 z-30 border-b border-line bg-page/95 backdrop-blur">
+      <header className="app-header sticky top-0 z-30 border-b border-line bg-page">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-2 lg:py-0">
           <a href="#asystent" onClick={(e) => { e.preventDefault(); setTab('asystent'); }}
              className="flex min-w-0 flex-col py-1 no-underline lg:py-3">

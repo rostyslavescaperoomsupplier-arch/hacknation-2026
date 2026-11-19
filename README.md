@@ -7,7 +7,7 @@ Projekt na hackathon HackNation 2026 (Bydgoszcz, 21-22.11.2026).
 | Folder | Co to jest |
 |---|---|
 | `mewka/` | Maskotka: animowana mewa 3D (three.js, model GLB) + fallback SVG + głos mewy z Web Audio. Strona demo ze wszystkimi stanami |
-| `assistant/` | Asystentka Mewka: czat + rozmowa głosowa (mikrofon i czytanie odpowiedzi), odpowiedzi z Claude przez własny serwer, pamięta przebieg rozmowy |
+| `assistant/` | **Asystent załogi MF Jantar Unity**: zakładki Asystent (czat + rozmowa głosowa z Mewką, odpowiedzi z Claude, pamięta rozmowę, proponuje drogę ewakuacji / ćwiczenie), Statek 3D (model promu, pokład kabinowy, maszynownia), Ewakuacja (trasa z dowolnej strefy do punktu zbiórki A/B, objazd przy zablokowanej klatce), Ćwiczenia (pożar, opuszczenie statku, człowiek za burtą, przeciek, rozlew, blackout, medyczne: sygnał, role, checklista, stoper, dziennik CSV) |
 
 ## Asystentka: uruchomienie
 
@@ -24,4 +24,4 @@ Wiedzę asystentki (np. opis wybranego zadania) wpisuje się w `assistant/server
 
 ## Zadanie
 
-TBD
+System pomocy dla załogi i kapitana promu (MF Jantar Unity). Materiał szkoleniowy wg ogólnej praktyki SOLAS / IMO; wiążące są Muster List i SMS statku. Model 3D to stylizowana rekonstrukcja, nie plany statku.
