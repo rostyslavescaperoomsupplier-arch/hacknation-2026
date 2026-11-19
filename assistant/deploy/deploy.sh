@@ -12,6 +12,7 @@ ssh "$HOST" "mkdir -p $DIR"
 rsync -az --delete --exclude node_modules --exclude 'server/data' \
   dist server shared src package.json package-lock.json "$HOST:$DIR/"
 rsync -az deploy/jantar-assistant.service "$HOST:/etc/systemd/system/jantar-assistant.service"
+rsync -az deploy/jantar-bands.service "$HOST:/etc/systemd/system/jantar-bands.service"
 rsync -az deploy/nginx.conf "$HOST:/etc/nginx/sites-available/jantar-assistant"
 ssh "$HOST" bash -s <<REMOTE
 set -e
@@ -24,5 +25,7 @@ grep -q connection_upgrade /etc/nginx/nginx.conf /etc/nginx/conf.d/*.conf 2>/dev
   printf 'map \$http_upgrade \$connection_upgrade {\n    default upgrade;\n    %s close;\n}\n' "''" > /etc/nginx/conf.d/connection_upgrade.conf
 nginx -t && systemctl reload nginx
 systemctl daemon-reload && systemctl enable --now jantar-assistant && systemctl restart jantar-assistant
+# demo only: simulated wristbands (disable on a ship with real ones: systemctl disable --now jantar-bands)
+systemctl enable --now jantar-bands && systemctl restart jantar-bands
 sleep 1; systemctl --no-pager --lines=3 status jantar-assistant | tail -4
 REMOTE

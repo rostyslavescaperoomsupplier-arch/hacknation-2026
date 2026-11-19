@@ -1,0 +1,21 @@
+[Unit]
+Description=Jantar Unity demo: simulated crew ESP32 wristbands (POST /api/bands/scan to the assistant)
+After=jantar-assistant.service
+Requires=jantar-assistant.service
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/jantar-assistant
+Environment=ASSISTANT_URL=http://127.0.0.1:3003
+Environment=CREW_API=http://127.0.0.1:8790
+Environment=SIM_SPEED=2
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/node --experimental-strip-types server/simulate-bands.ts
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+MemoryMax=120M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 // "Załoga" layer of the ship view: terminal markers + zone headcount badges over the 3D canvas (HTML elements kept on
 // projected 3D points by ShipView.setAnchorLayer), the side panel for a picked room / zone, the keyboard list
 // "Terminale i obsada", the legend and the evacuation-mode summary. Data: useCrewData (crew.ts).
-import { forwardRef } from 'react';
+import { forwardRef, type ReactNode } from 'react';
 import type { CrewZone } from '../../shared/crew-map';
 import type { Lang } from '../types';
 import { L, tr } from './routes';
@@ -31,7 +31,9 @@ export function ReaderGlyph({ sev, size = 16 }: { sev?: Severity | null; size?: 
 // ---------- markers over the canvas ----------
 export const CrewMarkers = forwardRef<HTMLDivElement, {
   lang: Lang; data: CrewData; show: boolean; sel: CrewSel | null; hl: string; onSelect(s: CrewSel): void;
-}>(function CrewMarkers({ lang, data, show, sel, hl, onSelect }, ref) {
+  /** more anchored markers in the same layer (wristband dots) */
+  children?: ReactNode;
+}>(function CrewMarkers({ lang, data, show, sel, hl, onSelect, children }, ref) {
   const key = selKey(sel);
   return (
     <div ref={ref} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -69,6 +71,7 @@ export const CrewMarkers = forwardRef<HTMLDivElement, {
           })}
         </>
       )}
+      {children}
     </div>
   );
 });

@@ -9,6 +9,9 @@ import { ShipView, type AlertLevel, type ModelKey } from './view';
 import { deckOf, roomName, zoneOfGroup } from './names';
 import { crewZoneName, useCrewData, useRouteZones } from './crew';
 import { CrewDetail, CrewLegend, CrewList, CrewMarkers, EvacCrew, type CrewSel } from './CrewLayer';
+import { routeZoneOf, useBands, type BandPerson } from './bands';
+import { BandDots, BandsPanel } from './BandsLayer';
+import { useAuth } from '../auth';
 
 export interface ShipPanelProps {
   lang: Lang;
@@ -111,6 +114,21 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
   const crew = useCrewData(onScreen && (mode === 'evac' || crewOn));
   const routeZones = useRouteZones(r.points, evZone);
   const showCrew = mode === 'model' && crewOn;
+  // ---- wristbands (evacuation view) ----
+  const bands = useBands(onScreen && mode === 'evac');
+  const [bandSel, setBandSel] = useState<string | null>(null);
+  const { openLogin } = useAuth();
+  const pickBand = (p: BandPerson) => {
+    if (bandSel === p.key) { setBandSel(null); return; }
+    setBandSel(p.key);
+    const z = routeZoneOf(p.zone);
+    if (z) setEvZone(z);
+    // the person is shown on the model: bring it on screen when the list scrolled it away
+    const st = hostRef.current?.parentElement;
+    if (st) { const b = st.getBoundingClientRect(); if (b.bottom < 80 || b.top > innerHeight - 80) st.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' }); }
+  };
+  const bandsAlarm = bands.status === 'ok' && !!bands.state?.alarm;
+  useEffect(() => { viewRef.current?.refreshAnchors(); }, [bands]);
   const crewSelId = useId();
   const crewSelLabel = !crewSel ? '' : crewSel.kind === 'room'
     ? (crew.rooms.find((x) => x.code === crewSel.code)?.name ?? '')
@@ -295,7 +313,9 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
         <div className="ship-stage relative h-[52vh] min-h-[300px] w-full overflow-hidden rounded-card border border-line lg:h-[62vh]">
           <p id={descId} className="sr-only">{canvasDesc}</p>
           <div ref={hostRef} className="ship-gl absolute inset-0" aria-hidden="true" />
-          <CrewMarkers ref={markerRef} lang={lang} data={crew} show={showCrew && !glFail} sel={crewSel} hl={crewHl} onSelect={pickCrew} />
+          <CrewMarkers ref={markerRef} lang={lang} data={crew} show={showCrew && !glFail} sel={crewSel} hl={crewHl} onSelect={pickCrew}>
+            {evac && !glFail && <BandDots lang={lang} data={bands} sel={bandSel} onSelect={pickBand} />}
+          </CrewMarkers>
           {showCrew && !glFail && <CrewLegend lang={lang} data={crew} />}
           {glFail && (
             <p className="absolute inset-0 flex items-center justify-center p-6 text-center text-ink-2">
@@ -336,6 +356,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
       <aside className={`panel flex min-w-0 flex-col gap-4 p-4 lg:order-none lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start ${evac ? 'order-2' : 'order-3'}`}>
         {mode === 'evac' ? (
           <>
+            {bandsAlarm && <BandsPanel lang={lang} data={bands} sel={bandSel} onSelect={pickBand} onLogin={() => openLogin('manual')} />}
             <p className="sr-only" role="status">
               {L(lang, `Droga z: ${ZONE[evZone].name.pl}, do: ${MUSTER[r.muster].name.pl}, ${Math.round(r.distance)} m.`,
                 `Route from ${ZONE[evZone].name.en} to ${MUSTER[r.muster].name.en}, ${Math.round(r.distance)} m.`)}
@@ -386,6 +407,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
                 ))}
               </ol>
             </div>
+            {!bandsAlarm && <BandsPanel lang={lang} data={bands} sel={bandSel} onSelect={pickBand} onLogin={() => openLogin('manual')} />}
             <EvacCrew lang={lang} data={crew} zone={evZone} routeZones={routeZones} />
             <p className="text-sm text-ink-2">
               {L(lang, 'Szacunek dla spokojnego marszu: 1,2 m/s po pokładzie, 0,6 m/s na schodach, bez tłoku.', 'Estimate at a calm pace: 1.2 m/s on deck, 0.6 m/s on stairs, no crowding.')}
