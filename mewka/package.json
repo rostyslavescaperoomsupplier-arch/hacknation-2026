@@ -1,0 +1,31 @@
+{
+  "name": "mewka",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mewka: animated 3D seagull mascot (three.js) with SVG fallback and Web Audio voice",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/three": "^0.186.0",
+    "react": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}

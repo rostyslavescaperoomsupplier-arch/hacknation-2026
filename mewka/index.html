@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mewka demo</title>
+  <style>
+    :root { --c-paper: #ffffff; --c-ink: #111111; color-scheme: light; }
+    :root[data-theme="dark"] { --c-paper: #14151a; --c-ink: #f2f1ee; color-scheme: dark; }
+    body { margin: 0; font: 15px/1.4 system-ui, sans-serif; background: var(--c-paper); color: var(--c-ink); }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+    .stage { display: flex; align-items: end; justify-content: center; gap: 32px; min-height: 260px; }
+    .stage .mewka--xl { inline-size: 200px; block-size: 200px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    button, select { font: inherit; padding: 8px 12px; border: 1px solid currentColor; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; min-height: 44px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; margin: 20px 0 4px; opacity: .7; }
+    #target { padding: 8px 12px; border: 2px dashed currentColor; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Mewka</h1>
+    <div class="stage" id="stage"></div>
+    <h2>Stan</h2>
+    <div class="row" id="states"></div>
+    <h2>Strój (tylko 3D)</h2>
+    <div class="row" id="outfit"></div>
+    <h2>Głos (Web Audio)</h2>
+    <div class="row" id="sounds"></div>
+    <h2>Inne</h2>
+    <div class="row">
+      <button id="theme">Motyw jasny / ciemny</button>
+      <button id="point">Wskaż cel</button>
+      <span id="target">cel</span>
+    </div>
+  </main>
+  <script type="module" src="/src/demo.ts"></script>
+</body>
+</html>

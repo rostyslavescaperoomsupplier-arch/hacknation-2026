@@ -1,0 +1,122 @@
+/* Mewka: seagull mascot. transform/opacity only. Poses live here (they are the
+   truth for SSR, no-JS and reduced motion); mewka.ts adds WAAPI gestures on top. */
+.mewka {
+  --mw-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --mw-io: cubic-bezier(0.77, 0, 0.175, 1);
+  --mw-sw: 1.15px; /* ~ the 3D bird's ink line */
+  display: inline-block;
+  inline-size: 44px;
+  block-size: 44px;
+  flex: none;
+  pointer-events: none;
+  line-height: 0;
+}
+.mewka--sm { inline-size: 28px; block-size: 28px; --mw-sw: 1px; }
+.mewka--lg { inline-size: 72px; block-size: 72px; }
+.mewka svg { display: block; inline-size: 100%; block-size: 100%; overflow: visible; }
+
+/* paint: the 3D gull's own colours (sampled from its lit rest pose), so the SVG fallback and the 3D bird are the same
+   bird. Outline = --mw-ink, silhouette only (see mewka-svg.ts); night: a warm hairline like the 3D bird's. */
+.mewka {
+  --mw-ink: var(--c-ink, #111);
+  --mw-b1: #f1f0ec; --mw-b2: #d3d6d8;   /* body: lit top -> shaded belly */
+  --mw-hd: #f2f1ee; --mw-tail: #dfe2e4;
+  --mw-wg: #c9ced4; --mw-cv: #bfc5cc; --mw-seam: #9aa2ab; --mw-bk: #19191b; --mw-wt: #f4f3ef;
+  --mw-gold: #d9b552; --mw-leg: #c39a3b; --mw-gy: #c8332a;
+  --mw-er: #1b1b1d; --mw-eo: #e0913a; --mw-ei: #efe1aa; --mw-ep: #0a0a0b; --mw-lash: #5d544c;
+  --mw-sh: #1a1c22;
+}
+:root[data-theme="dark"] .mewka { --mw-ink: #3b3427; --mw-sh: #000; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .mewka { --mw-ink: #3b3427; --mw-sh: #000; } }
+.mewka .mw-bd { fill: url(#mw-gb); }
+.mewka .mw-hd, .mewka .mw-lid { fill: var(--mw-hd); }
+.mewka .mw-tl { fill: var(--mw-tail); }
+.mewka .mw-wg { fill: var(--mw-wg); }
+.mewka .mw-cv { fill: var(--mw-cv); }
+.mewka .mw-bk { fill: var(--mw-bk); }
+.mewka .mw-wt { fill: var(--mw-wt); }
+.mewka .mw-lg { fill: var(--mw-leg); stroke: var(--mw-ink); stroke-width: calc(var(--mw-sw) * .7); stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.mewka .mw-bkk { fill: var(--mw-gold); stroke: var(--mw-ink); stroke-width: calc(var(--mw-sw) * .7); stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.mewka .mw-gy { fill: var(--mw-gy); }
+.mewka .mw-sm { fill: none; stroke: var(--mw-seam); stroke-width: calc(var(--mw-sw) * .6); stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.mewka .mw-ln { fill: none; stroke: var(--mw-ink); stroke-width: var(--mw-sw); stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.mewka .mw-er { fill: var(--mw-er); } .mewka .mw-eo { fill: var(--mw-eo); } .mewka .mw-ei { fill: var(--mw-ei); }
+.mewka .mw-ep { fill: var(--mw-ep); } .mewka .mw-eg { fill: #fff; }
+.mewka .mw-lash { fill: none; stroke: var(--mw-lash); stroke-width: calc(var(--mw-sw) * .5); stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.mewka #mw-dots { fill: #d9b25a; }
+/* below 60 px the 3D bird draws a bigger, darker eye (no iris ring): same here */
+.mewka--sm .mw-eo, .mewka--sm .mw-ei, .mewka--md .mw-eo, .mewka--md .mw-ei, .mewka--sm .mw-cv { display: none; }
+.mewka--sm #mw-eye-l, .mewka--md #mw-eye-l { transform: scale(1.45); transform-origin: 32.54px 22.96px; } /* = 3D: eye holder x1.45 about the neck */
+.mewka--sm .mw-lash, .mewka--md .mw-lash { display: none; }
+/* thin gold legs / beak: at small sizes the ink stroke would swallow the gold (the 3D outline is silhouette-only too) */
+.mewka--sm :is(.mw-lg, .mw-bkk), .mewka--md :is(.mw-lg, .mw-bkk) { stroke: none; }
+
+/* rig pivots (viewBox units, projected from the 3D rig) */
+.mewka svg * { transform-box: view-box; }
+#mw { transform-origin: 23.96px 46.02px; }
+#mw-body { transform-origin: 24px 40px; }
+#mw-head, .mewka .mw-look { transform-origin: 32.54px 22.96px; }
+#mw-wing-l { transform-origin: 26.38px 29.25px; }
+#mw-wing-r { transform-origin: 30.56px 27.72px; }
+#mw-beak-bottom { transform-origin: 37.11px 21.52px; }
+#mw-lid-l { transform-origin: 0 17.89px; }
+#mw-lid-l { transform: scaleY(.08); } /* = the 3D bird's resting lid */
+#mw-dots { opacity: 0; }
+
+/* pose transitions: interruptible, retarget from the current value */
+#mw-head, #mw-wing-l, #mw-wing-r, #mw-beak-bottom { transition: transform 340ms var(--mw-io); }
+#mw-dots { transition: opacity 200ms var(--mw-out); }
+
+/* pointer look (JS writes --look-x/--look-y, -1..1; no transition, JS lerps) */
+.mewka .mw-look { transform: rotate(calc(var(--look-y, 0) * 7deg)); }
+#mw-pupil-l { transform: translate(calc(var(--look-x, 0) * .45px), calc(var(--look-y, 0) * .4px)); }
+
+/* ---- states ----
+   hidden/peek are poses only: the host (mascot-host) moves and clips the bird. */
+.mewka[data-state="hidden"] #mw-head { transform: rotate(10deg); }     /* tucked, beak down */
+.mewka[data-state="peek"] #mw-head { transform: rotate(-5deg); }       /* curious, beak up */
+.mewka[data-state="listening"] #mw-wing-l { transform: rotate(84deg) scale(.62); }
+.mewka[data-state="listening"] #mw-head { transform: rotate(7deg); transition-delay: 60ms; }
+.mewka[data-state="thinking"] svg { --look-x: .4; --look-y: -1; }
+.mewka[data-state="thinking"] #mw-head { transform: rotate(-9deg); }
+.mewka[data-state="thinking"] #mw-dots { opacity: 1; }
+.mewka[data-state="pointing"] #mw-wing-l { transform: rotate(var(--mw-pt, 220deg)) scale(.9); }
+.mewka[data-state="pointing"] svg { --look-x: 1; --look-y: 0; }
+.mewka[data-state="unsure"] #mw-wing-l { transform: rotate(22deg); }
+.mewka[data-state="unsure"] #mw-wing-r { transform: rotate(16deg); }
+.mewka[data-state="unsure"] #mw-head { transform: rotate(-7deg); }
+
+/* ---- ambient (only while visible; stops when paused / tab hidden / off-screen) ----
+   7 s cycle: 3.5 s breath then stillness (WCAG 2.2.2: no motion > 5 s non-stop).
+   Blinks at 3.2 s and 7 s -> irregular 3-4 s rhythm, far below 3 Hz. */
+.mewka:not([data-state="hidden"]) #mw-body { animation: mw-breath 7s cubic-bezier(.37, 0, .63, 1) infinite; }
+.mewka:not([data-state="hidden"]) #mw-lid-l { animation: mw-blink 7s linear infinite; }
+.mewka[data-state="thinking"] #mw-dots circle { animation: mw-dot 1.2s var(--mw-io) infinite; }
+.mewka[data-state="thinking"] #mw-dots circle:nth-child(2) { animation-delay: .15s; }
+.mewka[data-state="thinking"] #mw-dots circle:nth-child(3) { animation-delay: .3s; }
+.mewka[data-paused] *, .mewka[data-state="hidden"] * { animation-play-state: paused !important; }
+
+@keyframes mw-breath { 0%, 50%, 100% { transform: none; } 25% { transform: translateY(-.6px) scaleY(1.012); } }
+@keyframes mw-blink { 0%, 44%, 47.5%, 96%, 100% { transform: scaleY(.08); } 45.7%, 98% { transform: scaleY(1); } }
+@keyframes mw-dot { 0%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+/* ---- reduced motion: same poses, swapped instantly, nothing loops ---- */
+@media (prefers-reduced-motion: reduce) {
+  .mewka svg, .mewka svg * { transition: none !important; animation: none !important; }
+  .mewka[data-state="listen-invite"] #mw-wing-l { transform: rotate(84deg) scale(.62); }
+}
+html[data-motion="reduce"] .mewka svg, html[data-motion="reduce"] .mewka svg * { transition: none !important; animation: none !important; }
+html[data-motion="reduce"] .mewka[data-state="listen-invite"] #mw-wing-l { transform: rotate(84deg) scale(.62); }
+
+/* ---- 3D bird (mewka3d.ts): canvas is 1.5x the box, centred; SVG stays until the first 3D frame ----
+   The SVG is traced from the 3D rest pose with the same framing, so the swap is a hard cut in one frame (never both
+   at once, no crossfade ghosting). */
+.mewka { position: relative; }
+.mewka--xl { inline-size: 104px; block-size: 104px; }
+.mewka > .mw3d {
+  position: absolute; inset: -25%; inline-size: 150%; block-size: 150%;
+  opacity: 0; pointer-events: none;
+}
+.mewka[data-mw3d="on"] > .mw3d { opacity: 1; }
+.mewka[data-mw3d="on"] > svg { visibility: hidden; }
+.mewka[data-mw3d="on"] svg * { animation-play-state: paused !important; }
