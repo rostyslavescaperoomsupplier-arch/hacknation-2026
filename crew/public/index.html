@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Statystyki załogi</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Statystyki załogi <span class="ship">MS Brda</span></h1>
+      <p class="muted" id="updated">Ładowanie…</p>
+    </div>
+    <div class="actions">
+      <button id="refresh" type="button">Odśwież</button>
+    </div>
+  </header>
+
+  <section class="tiles" id="tiles" aria-label="Podsumowanie"></section>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="alerts" aria-selected="true">Obsada i alerty <span class="badge" id="alertBadge" hidden></span></button>
+    <button role="tab" data-tab="rooms" aria-selected="false">Pomieszczenia</button>
+    <button role="tab" data-tab="crew" aria-selected="false">Załoga</button>
+  </nav>
+
+  <main>
+    <section id="tab-alerts" class="tab">
+      <div class="card">
+        <h2>Obsada stanowisk</h2>
+        <p class="muted">Pomieszczenia, w których musi stale przebywać minimalna liczba osób. Pasek pokazuje, przez jaką część ostatnich 24 godzin obsada była pełna.</p>
+        <div id="staffing" class="staffing"></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h2>Praca w pojedynkę w strefach niebezpiecznych</h2>
+          <p class="muted" id="loneNote"></p>
+          <div id="lone"></div>
+        </div>
+        <div class="card">
+          <h2>Czas od ostatniego odbicia</h2>
+          <p class="muted" id="staleNote"></p>
+          <div class="table-wrap"><table id="staleTable">
+            <thead><tr><th>Osoba</th><th>Ostatnio w</th><th class="num">Godzin temu</th><th>Status</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <button type="button" id="staleMore" class="link"></button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-rooms" class="tab" hidden>
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Plan statku: obłożenie pomieszczeń</h2>
+            <p class="muted">Kolor pokazuje, jaka część bezpiecznej pojemności pomieszczenia jest zajęta. Kliknij kafelek, żeby zobaczyć szczegóły.</p>
+          </div>
+          <div class="legend" id="occLegend"></div>
+        </div>
+        <div id="shipMap" class="ship-map"></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h2>Osoby według roli pomieszczenia</h2>
+          <p class="muted">Ile osób jest teraz w pomieszczeniach danego typu</p>
+          <div id="roleChart" class="hbars"></div>
+        </div>
+        <div class="card">
+          <h2>Odbicia na terminalach w ostatnich 24 godzinach</h2>
+          <p class="muted">Liczba wejść i wyjść w każdej godzinie</p>
+          <div id="activityChart" class="vbars"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Wszystkie pomieszczenia</h2>
+          <input type="search" id="roomFilter" placeholder="Filtruj po nazwie lub roli…" aria-label="Filtruj pomieszczenia">
+        </div>
+        <div class="table-wrap">
+          <table id="roomTable">
+            <thead><tr>
+              <th data-sort="code">Kod</th>
+              <th data-sort="name">Nazwa</th>
+              <th data-sort="role">Rola</th>
+              <th data-sort="deck" class="num">Pokład</th>
+              <th data-sort="area_m2" class="num">Pow. m²</th>
+              <th data-sort="capacity" class="num">Pojemność</th>
+              <th data-sort="people" class="num">Osoby</th>
+              <th data-sort="occupancy">Obłożenie</th>              <th data-sort="checkins_24h" class="num">Odbicia 24 h</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-crew" class="tab" hidden>
+      <div class="card">
+        <div class="card-head">
+          <h2>Załoga i aktualne położenie</h2>
+          <input type="search" id="crewFilter" placeholder="Szukaj: imię, nazwisko, stanowisko, nr, UID RFID…" aria-label="Szukaj w załodze">
+        </div>
+        <div class="table-wrap">
+          <table id="crewTable">
+            <thead><tr>
+              <th>Nr</th><th>Imię i nazwisko</th><th>Stanowisko</th><th>Dział</th><th>Wachta</th>
+              <th>Gdzie jest</th><th>Od</th><th>Narodowość</th><th>Ur.</th><th class="num">Tel. wewn.</th><th>Kabina</th><th>Nośnik RFID</th><th>UID RFID</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="roomDialog">
+    <form method="dialog"><button class="close" aria-label="Zamknij">×</button></form>
+    <div id="roomDetail"></div>
+  </dialog>
+
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

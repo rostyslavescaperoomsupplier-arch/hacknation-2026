@@ -1,0 +1,14 @@
+{
+  "name": "crew-terminal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ship crew terminal: SQLite database of rooms, crew and check-ins + browser statistics dashboard",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.ts",
+    "seed": "node --disable-warning=ExperimentalWarning server/seed-cli.ts",
+    "simulate": "node server/simulate-terminals.ts"
+  }
+}

@@ -8,6 +8,8 @@ Projekt na hackathon HackNation 2026 (Bydgoszcz, 21-22.11.2026).
 |---|---|
 | `mewka/` | Maskotka: animowana mewa 3D (three.js, model GLB) + fallback SVG + głos mewy z Web Audio. Strona demo ze wszystkimi stanami |
 | `assistant/` | **Asystent załogi MF Jantar Unity**: zakładki Asystent (czat + rozmowa głosowa z Mewką, odpowiedzi z Claude, pamięta rozmowę, proponuje drogę ewakuacji / ćwiczenie), Statek 3D (model promu, pokład kabinowy, maszynownia), Ewakuacja (trasa z dowolnej strefy do punktu zbiórki A/B, objazd przy zablokowanej klatce), Ćwiczenia (pożar, opuszczenie statku, człowiek za burtą, przeciek, rozlew, blackout, medyczne: sygnał, role, checklista, stoper, dziennik CSV) |
+| `crew/` | Terminal załogi: baza SQLite (pomieszczenia, załoga, terminale, odbicia kart RFID) + panel statystyk. `cd crew && npm start` → http://localhost:8790. Asystent czyta ją przez `/api/crew/*` (mapowanie pomieszczeń na prom: `assistant/shared/crew-map.ts`) |
+| `videochat/` | Prototyp wideo-czatu na LiveKit (FastAPI); w aplikacji wideo/audio między terminalami działa w zakładce Łączność |
 
 ## Asystentka: uruchomienie
 

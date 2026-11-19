@@ -3,7 +3,7 @@
 //    CREW_API defaults to http://127.0.0.1:8790; set CREW_API=off (or empty) to switch the crew features off.
 //  - handleCrewProxy: read-only proxy for the browser, GET /api/crew/{summary|rooms|rooms/:id|crew?q=|terminals|activity|alerts}.
 //    Same JSON as the crew server; rooms and terminals get `place: { zone, at } | null` from shared/crew-map.ts;
-//    crew rows (crew?q= and rooms/:id .crew) lose birth_date, nationality and badge.
+//    crew rows (crew?q= and rooms/:id .crew) lose birth_date, nationality, badge and the RFID uid/type.
 //    Same origin / x-assistant-token check as the chat, own rate limit (120 / min / IP), 503 when the database is down.
 //  - CREW_TOOLS + runCrewTool: read-only Claude tools for the chat; results are compact JSON, no birth date / nationality
 //    unless the tool input says `details: true`.
@@ -65,7 +65,7 @@ const zoneOf = (code: string | null | undefined): CrewZone | null => (code && CR
 
 // ---------- proxy ----------
 /** Fields the browser never gets from the proxy (the map UI does not show them): crew lists drop them. */
-const PRIVATE_FIELDS = ['birth_date', 'nationality', 'badge'];
+const PRIVATE_FIELDS = ['birth_date', 'nationality', 'badge', 'rfid_uid', 'rfid_type']; // RFID UID would let anyone clone a card
 const publicPerson = (c: any) => {
   if (!c || typeof c !== 'object') return c;
   const out = { ...c };
