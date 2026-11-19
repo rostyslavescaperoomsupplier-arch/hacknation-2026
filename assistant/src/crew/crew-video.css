@@ -15,7 +15,7 @@
   border-radius: var(--radius-card); background: var(--c-paper-2); color: var(--c-teal); border: 1px solid var(--c-line);
 }
 .crew-video .cv-warn {
-  border-inline-start: 3px solid var(--c-gold); background: var(--c-paper); padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--c-gold) 45%, transparent); background: color-mix(in srgb, var(--c-gold) 8%, var(--c-paper)); padding: 8px 12px;
   font-size: 0.9375rem; color: var(--c-gold-ink); border-radius: var(--radius-card);
 }
 
