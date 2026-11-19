@@ -130,6 +130,8 @@ function scheduleSave() {
 }
 /** Write pending changes now (tests, shutdown). */
 export function flushAlarms() { if (saveTimer) writeNow(); }
+/** the alarm in force right now (null: none); read-only view for server/positions.ts */
+export function activeAlarm(): Alarm | null { return active; }
 process.once('beforeExit', flushAlarms);
 
 // ---------- helpers ----------

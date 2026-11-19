@@ -28,6 +28,7 @@ import { CREW_API, crewEnabled, handleCrewProxy } from './crew.ts';
 import { attachCrewVideoWebSocket } from './crew-video.ts';
 import { attachAlarms, handleAlarmHttp } from './alarms.ts';
 import { handleStatsHttp } from './stats.ts';
+import { handleBandsHttp } from './positions.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -191,6 +192,7 @@ const server = createServer({ connectionsCheckingInterval: 2_000 }, async (req, 
     if (await handleCrewProxy(req, res)) return;
     if (await handleAlarmHttp(req, res)) return;
     if (await handleStatsHttp(req, res)) return;
+    if (await handleBandsHttp(req, res)) return;
     if (url.startsWith('/api/')) return send(res, 404, { error: 'not found' });
     serveStatic(req, res);
   } catch (e) {

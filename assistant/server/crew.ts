@@ -230,6 +230,20 @@ export const CREW_TOOLS: BetaToolUnion[] = [
     input_schema: { type: 'object', properties: {}, additionalProperties: false }, // no arguments: strict adds nothing
   },
   {
+    name: 'wristband_positions',
+    description: 'Live positions from the crew ESP32 wristbands (BLE triangulation, accuracy a few metres). Without a query: during '
+      + 'an alarm, everyone NOT yet at a muster station, most urgent first (status sos, still = not moving for over 60 s, lost = no '
+      + 'signal for 30 s with the last known place, moving), plus counts. With a query: where that person is now (zone, deck, '
+      + 'seconds since last signal). Use for "kogo brakuje na zbiórce", "gdzie jest bosman", "kto jeszcze jest w maszynowni".',
+    strict: true,
+    input_schema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Part of a name or surname; empty string = everyone still to be found.' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'list_terminals',
     description: 'List the card check-in terminals: terminal code, room code, room name and ship zone.',
     input_schema: { type: 'object', properties: {}, additionalProperties: false }, // no arguments: strict adds nothing
@@ -348,6 +362,7 @@ export async function runCrewTool(name: string, input: unknown): Promise<ToolOut
       case 'room_people': return ok(await roomPeople(inputObj(input)));
       case 'safety_alerts': return ok(await safetyAlerts());
       case 'list_terminals': return ok(await listTerminals());
+      case 'wristband_positions': return ok(await (await import('./positions.ts')).bandsForTool(String(inputObj(input).query ?? '').slice(0, 100)));
       default: return err(`unknown tool ${name}`);
     }
   } catch (e) {

@@ -188,16 +188,17 @@ function Shell({ initialLang }: { initialLang: Lang }) {
     <AlarmProvider>
     <div className="app min-h-dvh" data-typing={typing || undefined}>
       <header className="app-header sticky top-0 z-30 border-b border-line bg-page">
-        <div className="gutter mx-auto flex max-w-6xl items-center gap-3 py-2 lg:gap-4 lg:py-0 lg:pt-1">
+        <div className="gutter mx-auto flex max-w-6xl items-center gap-2 py-2 sm:gap-3 lg:flex-wrap lg:gap-x-4 lg:py-0 lg:pt-1 xl:flex-nowrap xl:gap-x-3">
           <a href="#asystent" onClick={(e) => { e.preventDefault(); setTab('asystent'); }}
-             className="flex min-w-0 flex-col py-1 no-underline lg:py-3">
-            <span className="tech-title whitespace-nowrap text-[1.5rem] tracking-[0.06em]">Jantar Unity</span>
-            <span className="tech-kicker hidden truncate sm:block lg:hidden xl:block">{s.app_kicker}</span>
+             className="flex min-w-0 flex-col py-1 no-underline lg:shrink-0 lg:py-3">
+            <span className="tech-title truncate text-[1.25rem] tracking-[0.06em] sm:text-[1.5rem]">Jantar Unity</span>
+            <span className="tech-kicker hidden truncate sm:block xl:hidden">{s.app_kicker}</span>
           </a>
 
           <div role="tablist" aria-label={s.tabs_label}
                className="app-tabs fixed inset-x-0 bottom-0 z-30 grid grid-cols-7 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)]
-                          lg:static lg:ml-4 lg:flex lg:self-stretch lg:border-t-0 lg:bg-transparent lg:pb-0">
+                          lg:static lg:order-last lg:-mx-3 lg:flex lg:basis-full lg:self-stretch lg:border-t-0 lg:bg-transparent lg:pb-0
+                          xl:order-none xl:mx-0 xl:min-w-0 xl:basis-auto">
             {TABS.map((t) => (
               <button key={t} ref={(el) => { tabRefs.current[t] = el; }} type="button" role="tab" id={`tab-${t}`}
                       aria-selected={tab === t} aria-controls={t === 'statek' || t === 'ewakuacja' ? 'panel-ship' : `panel-${t}`}
@@ -205,7 +206,7 @@ function Shell({ initialLang }: { initialLang: Lang }) {
                       aria-label={short[t] ? label[t] : undefined}
                       className="app-tab relative flex min-h-[60px] min-w-0 flex-col items-center justify-center gap-0.5 px-0.5
                                  text-[0.8125rem] font-semibold leading-tight text-ink-2
-                                 hover:text-ink aria-selected:text-ink lg:min-h-[64px] lg:flex-row lg:px-3 lg:text-[0.875rem] lg:uppercase lg:tracking-[0.05em] xl:px-4 xl:text-[0.9375rem]">
+                                 hover:text-ink aria-selected:text-ink lg:min-h-[52px] lg:flex-row lg:px-3 lg:text-[0.875rem] lg:uppercase lg:tracking-[0.05em] xl:min-h-[64px]">
                 <span className="app-tab-ic lg:hidden">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}
                        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className="shrink-0">
@@ -224,14 +225,14 @@ function Shell({ initialLang }: { initialLang: Lang }) {
                     aria-label={s.night}
                     className="hdr-btn tap inline-flex items-center justify-center gap-2 rounded-card border border-line bg-paper px-3 text-sm font-semibold uppercase text-ink-2 hover:text-ink">
               <MoonIcon />
-              <span className="hidden sm:inline lg:hidden xl:inline" aria-hidden="true">{s.night_short}</span>
+              <span className="hidden sm:inline lg:hidden" aria-hidden="true">{s.night_short}</span>
             </button>
             <div role="group" aria-label={s.lang_label} className="flex overflow-hidden rounded-card border border-line bg-paper">
               {(['pl', 'en'] as Lang[]).map((l) => {
                 const on = l === 'pl' ? lang === 'pl' : lang !== 'pl';
                 return (
                   <button key={l} type="button" aria-pressed={on} lang={l} onClick={() => changeLang(l)}
-                          className={`hdr-btn tap px-3 text-sm font-semibold uppercase ${on ? '' : 'text-ink-2 hover:text-ink'}`}>
+                          className={`hdr-btn tap px-2 text-sm font-semibold uppercase sm:px-3 ${on ? '' : 'text-ink-2 hover:text-ink'}`}>
                     {l}
                   </button>
                 );

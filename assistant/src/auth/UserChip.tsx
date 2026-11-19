@@ -60,12 +60,12 @@ export default function UserChip({ lang }: { lang: Lang }) {
               aria-label={L(lang, `Zalogowany: ${user.name}, ${user.rank}`, `Logged in: ${user.name}, ${user.rank}`)}
               className="auth-chip tap inline-flex max-w-[16rem] items-center gap-2 rounded-card border border-line bg-paper px-2 text-left hover:bg-paper-2">
         <span aria-hidden="true" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-card bg-paper-2 font-display text-base font-bold">{initials(user.name)}</span>
-        {/* name + rank where the header has room: tablets (tabs at the bottom) and wide desktops; initials + role in between */}
-        <span className="hidden min-w-0 flex-col leading-tight sm:flex lg:hidden 2xl:flex">
+        {/* name + rank where the header has room: tablets (tabs at the bottom); desktops share the row with 7 tabs, so initials + role */}
+        <span className="hidden min-w-0 flex-col leading-tight sm:flex lg:hidden">
           <span className="truncate text-sm font-semibold">{user.name}</span>
           <span className="truncate text-xs text-ink-2">{user.rank}</span>
         </span>
-        <RoleBadge lang={lang} role={user.role} className="hidden md:inline-flex" />
+        <span className="hidden md:inline-flex"><RoleBadge lang={lang} role={user.role} /></span>
       </button>
       {open && (
         <div id={`${ids}-m`} className="auth-menu panel absolute right-0 top-full z-40 mt-2 flex w-72 flex-col gap-3 p-4">
@@ -73,7 +73,7 @@ export default function UserChip({ lang }: { lang: Lang }) {
             <p className="font-bold">{user.name}</p>
             <p className="text-sm text-ink-2">{user.rank} · {user.department}</p>
             <p className="mt-2 flex items-center gap-2 text-sm"><RoleBadge lang={lang} role={user.role} />
-              <span className="text-ink-2">{user.method === 'rfid' ? L(lang, 'kartą', 'by card') : L(lang, 'PIN-em', 'by PIN')}</span>
+              <span className="text-ink-2">{user.method === 'rfid' ? L(lang, 'kartą', 'by card') : user.method === 'test' ? L(lang, 'tryb testowy, bez PIN-u', 'test mode, no PIN') : L(lang, 'PIN-em', 'by PIN')}</span>
             </p>
           </div>
           <p className="text-xs text-ink-2">

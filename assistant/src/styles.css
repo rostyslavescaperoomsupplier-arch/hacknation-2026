@@ -134,9 +134,9 @@ input::placeholder, textarea::placeholder { color: var(--c-ink-2); opacity: 1; }
 .app-tab[aria-selected="true"] .app-tab-ic { background: color-mix(in srgb, var(--c-gold) 16%, transparent); }
 @media (min-width: 1024px) { .app-tab-ic { display: none; } }
 /* six tabs on a 360 px phone: 60 px cells, slightly smaller label, the icon carries the recognition */
-@media (max-width: 419.98px) { .app-tab { font-size: 0.6875rem; letter-spacing: 0; } .app-tab-ic { width: 2.5rem; } }
-/* tablets: wide tab cells, so icon and label side by side, bigger label */
-@media (min-width: 600px) and (max-width: 1023.98px) {
+@media (max-width: 419.98px) { .app-tab { font-size: 0.6875rem; letter-spacing: 0; padding-inline: 0; } .app-tab-ic { width: 2.5rem; } }
+/* wide tablets: cells wide enough (>= 128 px) for icon and label side by side; below that the label would be cut */
+@media (min-width: 900px) and (max-width: 1023.98px) {
   .app-tab { flex-direction: row; gap: 0.5rem; font-size: 0.8125rem; }
 }
 @media (min-width: 1024px) {

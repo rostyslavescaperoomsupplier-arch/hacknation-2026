@@ -9,7 +9,8 @@
     "server": "node --env-file-if-exists=.env --experimental-strip-types --watch server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "node --env-file-if-exists=.env --experimental-strip-types server/index.ts",
-    "test": "node --experimental-strip-types --test 'tests/*.test.ts'"
+    "test": "node --experimental-strip-types --test 'tests/*.test.ts'",
+    "bands": "node --env-file-if-exists=.env --experimental-strip-types server/simulate-bands.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.10.0",

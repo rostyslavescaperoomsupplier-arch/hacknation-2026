@@ -8,7 +8,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 export type Role = 'captain' | 'bridge' | 'engine' | 'crew';
-export interface User { id: number; name: string; rank: string; department: string; role: Role; method: 'pin' | 'rfid'; expiresAt: string }
+export interface User { id: number; name: string; rank: string; department: string; role: Role; method: 'pin' | 'rfid' | 'test'; expiresAt: string }
 export interface RosterMember { id: number; name: string; rank: string; department: string; role: Role }
 /** why the sheet was opened (shown as a short line on top of it) */
 export type LoginReason = 'manual' | 'crew' | 'alarm' | 'comms';
@@ -34,8 +34,10 @@ interface Ctx {
   ready: boolean;
   loginPin(id: number, pin: string): Promise<LoginResult>;
   loginRfid(uid: string): Promise<LoginResult>;
+  /** test mode only (server AUTH_TEST_MODE=1): no PIN */
+  loginTest(id: number): Promise<LoginResult>;
   logout(): Promise<void>;
-  fetchRoster(): Promise<{ members: RosterMember[]; live: boolean; rfid: boolean } | null>;
+  fetchRoster(): Promise<{ members: RosterMember[]; live: boolean; rfid: boolean; testMode?: boolean } | null>;
   sheet: { open: boolean; reason: LoginReason };
   openLogin(reason?: LoginReason): void;
   closeLogin(): void;
@@ -152,6 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user, ready, sheet, loggedOut,
     loginPin: async (id, pin) => accept(await postLogin({ method: 'pin', id, pin })),
     loginRfid: async (uid) => accept(await postLogin({ method: 'rfid', uid })),
+    loginTest: async (id) => accept(await postLogin({ method: 'test', id })),
     logout: () => logout('manual'),
     async fetchRoster() {
       try {

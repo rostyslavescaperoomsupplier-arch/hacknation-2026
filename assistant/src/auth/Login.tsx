@@ -60,13 +60,14 @@ export default function LoginSheet({ lang }: { lang: Lang }) {
 }
 
 function Sheet({ lang, reason }: { lang: Lang; reason: LoginReason }) {
-  const { closeLogin, loginPin, loginRfid, fetchRoster } = useAuth();
+  const { closeLogin, loginPin, loginRfid, loginTest, fetchRoster } = useAuth();
   const ids = useId();
   const box = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<Step>('start');
   const [roster, setRoster] = useState<RosterMember[] | null>(null);
   const [rosterState, setRosterState] = useState<'loading' | 'ok' | 'down'>('loading');
   const [hasRfid, setHasRfid] = useState(true);
+  const [testMode, setTestMode] = useState(false);
   const [who, setWho] = useState<RosterMember | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,7 +76,7 @@ function Sheet({ lang, reason }: { lang: Lang; reason: LoginReason }) {
   const loadRoster = useCallback(() => {
     setRosterState('loading');
     fetchRoster().then((r) => {
-      if (r && Array.isArray(r.members) && r.members.length) { setRoster(r.members); setHasRfid(r.rfid); setRosterState('ok'); }
+      if (r && Array.isArray(r.members) && r.members.length) { setRoster(r.members); setHasRfid(r.rfid); setTestMode(!!r.testMode); setRosterState('ok'); }
       else setRosterState('down');
     });
   }, [fetchRoster]);
@@ -166,9 +167,17 @@ function Sheet({ lang, reason }: { lang: Lang; reason: LoginReason }) {
             <StartStep lang={lang} busy={busy} scanned={scanned} hasRfid={hasRfid} onRfid={submitRfid}
                        onPick={() => { setError(null); setStep('pick'); }} />
           )}
+          {testMode && step !== 'pin' && (
+            <p className="mb-3 rounded-card border-2 border-gold p-3 text-sm font-semibold">
+              {L(lang, 'Tryb testowy: wybierz osobę, logowanie bez PIN-u.', 'Test mode: pick a person, no PIN needed.')}
+            </p>
+          )}
           {step === 'pick' && (
             <PickStep lang={lang} roster={roster} state={rosterState} onRetry={loadRoster}
-                      onChoose={(m) => { setWho(m); setError(null); setStep('pin'); }} />
+                      onChoose={(m) => {
+                        setWho(m); setError(null);
+                        if (testMode) { setBusy(true); void loginTest(m.id).then(finish); } else setStep('pin');
+                      }} />
           )}
           {step === 'pin' && who && (
             <PinStep lang={lang} who={who} busy={busy}

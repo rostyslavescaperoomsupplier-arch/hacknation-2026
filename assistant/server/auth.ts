@@ -10,6 +10,8 @@
  *        (b) person + PIN (4-6 digits). PINs are generated (6 digits) for every member on first sync, stored only as
  *        scrypt hashes in accounts.json; the plaintext goes once to AUTH_DIR/demo-pins.txt (chmod 600) for the demo.
  *        ACCOUNTS_DEMO_PIN=<4-6 digits> makes that one PIN valid for everybody (dev / tests only, logged loudly).
+ *        AUTH_TEST_MODE=1: test mode for demos, pick a person and log in WITHOUT a PIN ({ method: 'test', id });
+ *        the roster says testMode: true so the login sheet skips the PIN pad. Every such login is logged.
  *        Per-IP bucket (AUTH_RATE_PER_MIN, default 10 / min) on every login; 5 wrong PINs for one person lock that
  *        person for 15 min (AUTH_LOCK_MS).
  * Sessions: 32 random bytes in cookie `ju_session` (HttpOnly, SameSite=Strict, Path=/, Max-Age 12 h, Secure when the
@@ -61,6 +63,8 @@ const READ_RATE = { cap: 60, perSec: 1 };
 const ROSTER_TTL_MS = envNum('AUTH_ROSTER_TTL_MS', 60_000);
 const MAX_SESSIONS = 5000;
 const PIN_RE = /^\d{4,6}$/;
+/** demo / test mode: log in by choosing a person, no PIN */
+export const TEST_MODE = /^(1|true|yes|on)$/i.test((process.env.AUTH_TEST_MODE ?? '').trim());
 const DEMO_PIN = (() => {
   const v = (process.env.ACCOUNTS_DEMO_PIN ?? '').trim();
   if (!v) return null;
@@ -262,11 +266,11 @@ export interface Session {
   rank: string;
   department: string;
   role: Role;
-  method: 'pin' | 'rfid';
+  method: 'pin' | 'rfid' | 'test';
   createdAt: string;
   expiresAt: string;
 }
-export interface User { id: number; name: string; rank: string; department: string; role: Role; method: 'pin' | 'rfid'; expiresAt: string }
+export interface User { id: number; name: string; rank: string; department: string; role: Role; method: 'pin' | 'rfid' | 'test'; expiresAt: string }
 export const publicUser = (s: Session): User =>
   ({ id: s.accountId, name: s.name, rank: s.rank, department: s.department, role: s.role, method: s.method, expiresAt: s.expiresAt });
 
@@ -454,6 +458,13 @@ async function login(req: IncomingMessage, res: ServerResponse) {
     if (!normalizeUid(uid) && !/^\d{6,20}$/.test(uid.trim())) return sendJson(res, 400, { error: 'bad request' });
     m = memberByUid(uid);
     if (!m) { console.warn(`[auth] unknown card from ${ip}`); return sendJson(res, 401, { error: 'unknown-card' }); }
+  } else if (body.method === 'test' && TEST_MODE) {
+    method = 'test';
+    const id = Number(body.id);
+    if (!Number.isInteger(id) || id <= 0) return sendJson(res, 400, { error: 'bad request' });
+    m = memberById(id);
+    if (!m) return sendJson(res, 401, { error: 'bad-credentials', left: MAX_FAILS });
+    console.warn(`[auth] TEST MODE login without PIN: ${m.name} (${m.role}) from ${ip}`);
   } else return sendJson(res, 400, { error: 'bad request' });
 
   const { token, session } = createSession(m, method);
@@ -500,6 +511,7 @@ export async function handleAuthHttp(req: IncomingMessage, res: ServerResponse):
         .sort((a, b) => a.department.localeCompare(b.department, 'pl') || ROLES.indexOf(a.role) - ROLES.indexOf(b.role) || a.name.localeCompare(b.name, 'pl')),
       live: liveRoster,
       rfid: members.some((m) => m.rfid),
+      testMode: TEST_MODE,
     });
     return true;
   }
@@ -543,6 +555,7 @@ export function attachAuth(server: Server): void {
 // ---------- start-up ----------
 loadAccounts();
 loadSessions();
+if (TEST_MODE) console.warn('[auth] AUTH_TEST_MODE is on: crew can log in WITHOUT a PIN (demo / tests only).');
 if (DEMO_PIN) console.warn('[auth] ACCOUNTS_DEMO_PIN is set: ONE PIN for every account. Development / tests only.');
 setInterval(pruneSessions, 10 * 60_000).unref();
 process.once('beforeExit', flushAuth);
