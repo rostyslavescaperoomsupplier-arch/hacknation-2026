@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import type { Action, Answer, Lang, Stair, Turn } from './types';
+import { parseCallIntent, requestCall } from './crew/callIntent';
+import { WakeListener, wakeSupported } from './voice/wake';
+import { LOCALE } from './voice/i18n';
 import { STR, CONTACT, contactLabel, type QuickAction } from './i18n';
 import { askStream, paragraphs } from './adapter';
 import { MewkaReact } from '../../mewka/src/mewka/MewkaReact';
@@ -42,9 +45,13 @@ export interface AssistantProps {
   onRoute?(zone: string, blocked: Stair | null): void;
   /** open the Ćwiczenia tab on this drill */
   onDrill?(id: string): void;
+  /** "zadzwoń na mostek": open the Łączność tab (the call itself goes through callIntent.requestCall) */
+  onCall?(): void;
+  /** "Hej Mewka" heard on another tab: bring the chat to the front */
+  onWake?(): void;
 }
 
-export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
+export default function Assistant({ lang, onRoute, onDrill, onCall, onWake }: AssistantProps) {
   const s = STR[lang];
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [value, setValue] = useState('');
@@ -108,9 +115,69 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
   voiceRef.current = voice;
   const ui = UI[lang === 'pl' ? 'pl' : 'en'];
 
+  // ---- "Hej Mewka" (voice/wake.ts): opt-in background listening for the name, any tab ----
+  const [wakeOn, setWakeOn] = useState(() => { try { return localStorage.getItem('ju-wake') === '1'; } catch { return false; } });
+  const [wakeOk, setWakeOk] = useState(false); // supported, decided after mount (SSR-safe)
+  useEffect(() => { setWakeOk(wakeSupported()); }, []);
+  const wakeRef = useRef<WakeListener | null>(null);
+  const onWakeRef = useRef(onWake);
+  onWakeRef.current = onWake;
+  const consented = () => { try { return localStorage.getItem('fs-voice-privacy') === '1'; } catch { return false; } };
+  // listen only while the voice mode itself is quiet (one recogniser at a time; Mewka must not wake herself)
+  const wakeActive = wakeOn && wakeOk && consented() && voice.phase === 'idle';
+  useEffect(() => {
+    if (!wakeActive) { wakeRef.current?.stop(); return; }
+    if (!wakeRef.current) {
+      wakeRef.current = new WakeListener(LOCALE[lang], (rest) => {
+        onWakeRef.current?.();
+        play(['greet', 900]);
+        if (rest) { voiceRef.current.wake(false); sendRef.current(rest); }
+        else voiceRef.current.wake(true);
+      }, () => { setWakeOn(false); });
+    } else wakeRef.current.setLocale(LOCALE[lang]);
+    wakeRef.current.start();
+    return () => wakeRef.current?.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wakeActive, lang]);
+  function toggleWake() {
+    const next = !wakeOn;
+    setWakeOn(next);
+    try { localStorage.setItem('ju-wake', next ? '1' : '0'); } catch { /* private mode */ }
+    // first time: the voice privacy note has to be accepted (the mic button shows it)
+    if (next && !consented()) voice.micPress();
+  }
+  const wakeSwitch = wakeOk && voice.stt ? (
+    <button type="button" role="switch" aria-checked={wakeOn} onClick={toggleWake}
+            title={lang === 'pl' ? 'Powiedz „Hej Mewka”, a Mewka zacznie rozmowę (nasłuch w tle)' : 'Say "Hey Mewka" and Mewka starts a conversation (background listening)'}
+            className="vx-switch tap inline-flex items-center gap-2.5 rounded-full px-1 text-sm font-semibold">
+      <span aria-hidden="true" className="vx-track"><span className="vx-thumb" /></span>
+      {lang === 'pl' ? '„Hej Mewka”' : '"Hey Mewka"'}
+      {wakeActive && <span className="text-xs font-normal text-ink-2">{lang === 'pl' ? 'nasłuchuję' : 'listening'}</span>}
+    </button>
+  ) : null;
+
   async function send(q: string) {
     const query = q.trim();
     if (!query || busy || inflight.current) return;
+    // "Mewka, zadzwoń na mostek": handled here, no model round trip (also offline / local engine)
+    const call = onCall ? parseCallIntent(query) : null;
+    if (call) {
+      voice.onUserInput();
+      setHero(false);
+      const pl = lang === 'pl';
+      const where = pl ? call.label.pl : call.label.en;
+      const text = !call.room
+        ? (pl ? 'Otwieram Łączność. Wybierz, do kogo dzwonimy.' : 'Opening Comms. Pick who to call.')
+        : (pl ? `Dzwonię: ${where} (${call.media === 'audio' ? 'rozmowa głosowa' : 'wideo'}). Przełączam na Łączność.`
+              : `Calling: ${where} (${call.media === 'audio' ? 'voice' : 'video'}). Switching to Comms.`);
+      setMsgs((m) => [...m, { id: ++seq, role: 'user', text: query }, { id: ++seq, role: 'bot', answer: { text: [text], sources: [] } }]);
+      setValue('');
+      play(['happy', 700]);
+      requestCall(call);
+      const open = onCall;
+      if (open) setTimeout(open, 450);
+      return;
+    }
     inflight.current = true;
     aim.current = null;
     voice.onUserInput();
@@ -413,7 +480,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
             </li>
           ))}
         </ul>
-        <VoiceBar voice={voice} lang={lang} />
+        <VoiceBar voice={voice} lang={lang} aside={wakeSwitch} />
         <form onSubmit={onSubmit} className="asst-composer flex items-center gap-2 rounded-full border border-ink/35 bg-paper py-1 pl-5 pr-1.5">
           <div className="min-w-0 flex-1">
             <label htmlFor="assistant-q" className="sr-only">{s.input_label}</label>

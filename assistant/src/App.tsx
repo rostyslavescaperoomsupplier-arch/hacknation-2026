@@ -249,7 +249,9 @@ function Shell({ initialLang }: { initialLang: Lang }) {
                  className="gutter mx-auto max-w-3xl pt-4">
           <Assistant lang={lang}
                      onRoute={(z, b) => showRoute(z as ZoneId, b)}
-                     onDrill={(id) => openDrill(id as DrillId)} />
+                     onDrill={(id) => openDrill(id as DrillId)}
+                     onCall={openComms}
+                     onWake={() => setTab('asystent')} />
         </section>
 
         <section id="panel-alarmy" role="tabpanel" aria-labelledby="tab-alarmy" hidden={tab !== 'alarmy'}

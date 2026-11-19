@@ -2,6 +2,7 @@
  *  media goes peer-to-peer. Each browser is one terminal from the crew database (GET /api/crew/terminals) or,
  *  when the database is down, a free-text name. The choice is remembered in localStorage and the terminal
  *  reconnects by itself, so it can be called from anywhere in the app (the incoming-call dialog is a portal). */
+import { CALL_EVENT, peekCall, takeCall } from './callIntent';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { Lang } from '../types';
@@ -60,6 +61,9 @@ const PL = {
   local: 'Ty', remote: 'Rozmówca', waitingVideo: 'Oczekiwanie na obraz…', voiceOnly: 'Rozmowa głosowa',
   note: 'Wersja demonstracyjna: kanał nie jest hasłem. W sytuacji zagrożenia używaj radia UKF i alarmu statku.',
   missed: 'Rozmowa zakończona lub odrzucona.', declined: 'Rozmówca odrzucił połączenie.', noAnswer: 'Nikt nie odebrał.',
+  callNone: (room: string) => `Mewka: żaden terminal w miejscu „${room}” nie jest teraz online.`,
+  callBusy: (room: string) => `Mewka: terminal w miejscu „${room}” prowadzi właśnie rozmowę.`,
+  callSetup: 'Mewka: najpierw wybierz ten terminal, potem połączę.',
   peerBusy: 'Terminal prowadzi inną rozmowę.', failed: 'Nie udało się nawiązać połączenia.',
   serverDown: 'Brak połączenia z serwerem statku. Ponawiam…',
   errSecure: 'Kamera i mikrofon działają tylko przez HTTPS lub localhost.',
@@ -102,6 +106,9 @@ const EN: Strings = {
   local: 'You', remote: 'Caller', waitingVideo: 'Waiting for video…', voiceOnly: 'Voice call',
   note: 'Demo: the channel is not a password. In an emergency use the VHF radio and the ship alarm.',
   missed: 'Call ended or declined.', declined: 'The call was declined.', noAnswer: 'No answer.',
+  callNone: (room: string) => `Mewka: no terminal in "${room}" is online right now.`,
+  callBusy: (room: string) => `Mewka: the terminal in "${room}" is on another call.`,
+  callSetup: 'Mewka: pick this terminal first, then I will connect.',
   peerBusy: 'That terminal is in another call.', failed: 'Could not establish the call.',
   serverDown: 'Cannot reach the ship server. Retrying…',
   errSecure: 'Camera and microphone need HTTPS or localhost.',
@@ -183,6 +190,8 @@ export default function CrewVideoChat({ lang, onOpen }: { lang: Lang; onOpen?: (
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [mood, setMood] = useState<MewkaState>('idle');
+  /** bumped when Mewka asks for a call from the chat (callIntent.ts) */
+  const [callTick, setCallTick] = useState(0);
 
   const socketRef = useRef<WebSocket | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -212,6 +221,27 @@ export default function CrewVideoChat({ lang, onOpen }: { lang: Lang; onOpen?: (
   const inCall = phase === 'dialing' || phase === 'negotiating' || phase === 'active';
 
   function move(next: Phase) { phaseRef.current = next; setPhase(next); }
+  // "Mewka, zadzwoń na mostek": run the call request once this terminal is connected and knows the peers
+  useEffect(() => {
+    const on = () => setCallTick(n => n + 1);
+    addEventListener(CALL_EVENT, on);
+    return () => removeEventListener(CALL_EVENT, on);
+  }, []);
+  useEffect(() => {
+    const r = peekCall();
+    if (!r) return;
+    const tt = tRef.current;
+    const label = lang === 'pl' ? r.label.pl : r.label.en;
+    if (phase === 'offline' && !identity) { takeCall(); setWarning(tt.callSetup); return; }
+    if (phase !== 'ready') return;
+    takeCall();
+    if (!r.room) return; // "zadzwoń" without a place: the comms screen is open, the user picks
+    const here = peers.filter(p => p.place === r.room);
+    const free = here.find(p => !p.busy);
+    if (!free) { setWarning(here.length ? tt.callBusy(label) : tt.callNone(label)); return; }
+    call(free, r.media);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, peers, callTick]);
   function setPartnerBoth(next: Person | null) { partnerRef.current = next; setPartner(next); }
   function transmit(payload: object): boolean {
     const socket = socketRef.current;

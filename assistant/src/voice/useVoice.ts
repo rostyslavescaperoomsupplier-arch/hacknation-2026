@@ -325,6 +325,13 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
       announce(v.ann_on);
       startListening();
     },
+    /** "Hej Mewka": voice mode on (answers read aloud, hands-free loop); listen = open the mic now */
+    wake(listen: boolean) {
+      setInvited(false);
+      setNotice(null);
+      if (!modeRef.current) { setMode(true); setError(null); autoRef.current = true; setAutoReadState(true); announce(v.ann_on); }
+      if (listen && phaseRef.current !== 'listening') startListening();
+    },
     consentOk() {
       lsSet('fs-voice-privacy', '1');
       setPhase('idle');
