@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Answer, Lang } from '../types';
 import { lev, tokens } from '../lib/text';
 import type { MewkaState } from '../../../mewka/src';
-import { Speaker, earcon, isIOS, listen, pickVoice, sentences, sttSupported, ttsSupported, voicesReady, type Listening, type Seg, type SttError } from './engine';
+import { Speaker, earcon, listen, pickVoice, sentences, sttSupported, ttsSupported, voicesReady, type Listening, type Seg, type SttError } from './engine';
 import { LOCALE, VSTR } from './i18n';
 import { claim, release } from '../lib/bus';
 import { speakable, speechText, spokenWords } from './speakable';
@@ -28,7 +28,7 @@ type Beat = [MewkaState, number?];
 export const GRACE_MS = 1600;
 export const RATES = [0.75, 1, 1.25, 1.5];
 /** after the voice ends, the mic opens this late (room reverb / the speaker's buffer tail) */
-const AFTER_SPEECH_MS = 1100;
+const AFTER_SPEECH_MS = 1400;
 /** right after the voice: a final that is mostly our own words is an echo, not a question */
 const ECHO_TAIL_MS = 3000;
 /** spoken commands that stop instead of being sent as a question */
@@ -296,8 +296,9 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
         if (loop && modeRef.current) loopT.current = window.setTimeout(() => { if (phaseRef.current === 'idle' && modeRef.current) startListening(); }, AFTER_SPEECH_MS);
       },
     }, open);
-    // barge-in: keep a recogniser open while speaking (not on iOS, where the mic would mute the voice)
-    if (loop && modeRef.current && sttSupported() && !isIOS()) { bargeRestarts.current = 0; startRec(); }
+    // half-duplex: the mic stays closed while the voice speaks. Browsers do not cancel the echo of speechSynthesis,
+    // so an open mic always ends up hearing Mewka herself. Interrupt = mic button, Escape, typing or a tap.
+    bargeRestarts.current = 99;
     return true;
   }
 
