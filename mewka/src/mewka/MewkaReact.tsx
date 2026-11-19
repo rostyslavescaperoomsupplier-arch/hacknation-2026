@@ -13,11 +13,13 @@ export interface MewkaReactProps {
   onReady?: (api: MewkaApi) => void;
   /** optional: Gniazdo Mewki items worn by the 3D bird (re-applied when it changes; SVG fallback: none) */
   outfit?: Outfit | null;
+  /** follow the mouse with the head (default true; touch screens and reduced motion never track) */
+  follow?: boolean;
 }
 
 const svgHtml = { __html: MEWKA_SVG };
 
-export function MewkaReact({ state = 'idle', size = 'md', className, pointTarget, onReady, outfit }: MewkaReactProps) {
+export function MewkaReact({ state = 'idle', size = 'md', className, pointTarget, onReady, outfit, follow = true }: MewkaReactProps) {
   const ref = useRef<HTMLSpanElement>(null);
   const api = useRef<MewkaApi | null>(null);
   // data-state is owned by the engine after mount (it must interrupt gestures first)
@@ -27,6 +29,7 @@ export function MewkaReact({ state = 'idle', size = 'md', className, pointTarget
     const m = createMewka(ref.current!);
     api.current = m;
     if (m.state !== state) m.setState(state);
+    if (follow) m.lookAtPointer(true);
     onReady?.(m);
     return () => { m.destroy(); api.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

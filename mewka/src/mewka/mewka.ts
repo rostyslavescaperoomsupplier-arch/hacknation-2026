@@ -169,9 +169,11 @@ export function createMewka(root: HTMLElement): MewkaApi {
     if (lastE) { // layout is read here (rAF), never inside pointermove
       if (dirty) { const r = root.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height * .3; dirty = false; }
       const dx = lastE.clientX - cx, dy = lastE.clientY - cy;
-      const near = state !== 'hidden' && dx * dx + dy * dy < 320 * 320;
-      tx = near ? clamp(dx / 160) : 0; ty = near ? clamp(dy / 160) : 0;
-      three?.look(tx, ty, near);
+      // the whole window counts: the bird turns towards the mouse wherever it is, more when it is close
+      const on = state !== 'hidden';
+      const rx = Math.max(160, innerWidth * 0.32), ry = Math.max(140, innerHeight * 0.32);
+      tx = on ? clamp(dx / rx) : 0; ty = on ? clamp(dy / ry) : 0;
+      three?.look(tx, ty, on);
       lastE = null;
     }
     x += (tx - x) * .18; y += (ty - y) * .18;

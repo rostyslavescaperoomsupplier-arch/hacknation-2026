@@ -290,8 +290,11 @@ class Bird implements Bird3D {
       else { p.le = clamp(wrap(Math.PI - rad), -0.8, 1.3); p.ls = 0.25; p.yaw = -0.25; p.hYaw = -0.45; }
       p.hPitch = clamp(-Math.sin(rad) * 0.35, -0.35, 0.35);
     } else if (LOOK_STATES.has(this.state) && this.lookOn) {
-      p.hYaw = this.lookX * 0.7;
+      p.hYaw = this.lookX * 0.75;
       p.hPitch = this.lookY * 0.4;
+      // the body follows a little too (on top of the state's own pose), so the turn reads at any size
+      p.yaw = (p.yaw ?? 0) + this.lookX * 0.28;
+      p.pitch = (p.pitch ?? 0) + this.lookY * 0.1;
       p.roll = -this.lookX * 0.08;
     }
     return p;
