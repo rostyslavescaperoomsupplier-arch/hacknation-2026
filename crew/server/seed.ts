@@ -158,6 +158,8 @@ export function seed(db: DatabaseSync, now = new Date()) {
 
     const insCrew = db.prepare(`INSERT INTO crew (badge, rfid_uid, rfid_type, first_name, last_name, rank, department, shift,
       nationality, birth_date, phone_ext, cabin_id, embarked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    // physical demo cards (4-byte MIFARE Classic UIDs) read at the stand: the captain and one AB seaman
+    const REAL_TAGS: Record<string, string> = { 'B-1001': '59:BA:E9:5A', 'B-1007': '84:CC:C3:1E' };
     // 7-byte UID like NTAG/MIFARE tags: "04:XX:XX:XX:XX:XX:XX"
     const uid = () => ['04', ...Array.from({ length: 6 }, () => Math.floor(r() * 256).toString(16).padStart(2, '0'))].join(':').toUpperCase();
     interface Member { id: number; shift: string; work: Weights; cabin: number; mess: number }
@@ -178,8 +180,9 @@ export function seed(db: DatabaseSync, now = new Date()) {
         const shift = shifts[i % shifts.length];
         // wristbands where hands get dirty or wet (engine room, galley), cards elsewhere
         const tagType = dept === 'Maszynownia' || dept === 'Hotel' ? 'opaska' : 'karta';
+        const genUid = uid(); // always drawn, so the rest of the generated data stays the same
         const id = Number(insCrew.run(
-          `B-${String(1000 + n)}`, uid(), tagType, pick(female ? nm.f : nm.m), last, rank, dept, shift, nat,
+          `B-${String(1000 + n)}`, REAL_TAGS[`B-${String(1000 + n)}`] ?? genUid, tagType, pick(female ? nm.f : nm.m), last, rank, dept, shift, nat,
           birth.toISOString().slice(0, 10), String(200 + n), cabin, embarked.toISOString().slice(0, 10),
         ).lastInsertRowid);
         // the first AB of each watch is the bridge lookout
