@@ -3,15 +3,28 @@
  * Uses only Node built-ins: the existing assistant server owns the WebSocket endpoint.
  * Deliberately keeps NO media, recordings, passwords, or chat history on the server.
  *
+ * Protocol (JSON text frames, unknown fields are ignored, unknown types answered with an error):
+ *   -> join { name, room, terminal?, place? }       <- welcome { id, room, peers: PeerInfo[] }
+ *   <- peer:joined { peer } | peer:left { id } | peer:status { id, busy }
+ *   -> call:invite { to, media?: 'audio'|'video' }  <- call:invite { from, name, terminal?, place?, media }
+ *   -> call:accept | call:reject | call:cancel | call:hangup { to }
+ *   -> rtc:offer | rtc:answer { to, sdp } | rtc:ice { to, candidate }
+ *   <- error { code, message }
+ * Abuse limits: Origin check (guard.ts), connections per IP, peers per room, number of rooms, message size,
+ * per-connection token bucket for all messages and a stricter one for call invitations.
+ *
  * HACKATHON DEMO ONLY. A room code is not authentication. For use on an actual
  * vessel add crew authentication, TLS, authorization, monitoring, and audit controls.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Socket } from 'node:net';
+import { clientIp, originAllowed } from './guard.ts';
 
 type Side = 'caller' | 'callee';
+type Media = 'audio' | 'video';
 type Call = { with: string; side: Side; accepted: boolean };
+type Bucket = { tokens: number; last: number };
 type Peer = {
   id: string;
   socket: Socket;
@@ -22,16 +35,43 @@ type Peer = {
   alive: boolean;
   name: string;
   room: string;
+  /** terminal code from the crew database (e.g. T-D4-01-A) and its room code (D4-01); empty for free-text names */
+  terminal: string;
+  place: string;
+  ip: string;
   call: Call | null;
   joinedTimeout: NodeJS.Timeout;
+  msgBucket: Bucket;
+  inviteBucket: Bucket;
+  strikes: number;
 };
 
 type Payload = Record<string, unknown>;
 const PATH = '/crew-video-ws';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const MAX_MESSAGE_BYTES = 32_768;
-const MAX_CONNECTIONS = 100;
-const MAX_ROOM_PEERS = 24;
+const envNum = (name: string, d: number) => {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : d;
+};
+const MAX_CONNECTIONS = envNum('CREW_VIDEO_MAX_CONNECTIONS', 100);
+const MAX_PER_IP = envNum('CREW_VIDEO_MAX_PER_IP', 20);
+const MAX_ROOMS = envNum('CREW_VIDEO_MAX_ROOMS', 32);
+const MAX_ROOM_PEERS = envNum('CREW_VIDEO_MAX_ROOM_PEERS', 40);
+/** all messages: burst of 60, 20 per second sustained (ICE candidates come in bursts) */
+const MSG_RATE = { cap: envNum('CREW_VIDEO_MSG_BURST', 60), perSec: 20 };
+/** call invitations: 6 in a burst, then one per 5 s (stops ring spam) */
+const INVITE_RATE = { cap: envNum('CREW_VIDEO_INVITE_BURST', 6), perSec: 0.2 };
+/** dropped messages before the connection is closed (1008 policy violation) */
+const MAX_STRIKES = 40;
+const TYPES = new Set(['join', 'call:invite', 'call:accept', 'call:reject', 'call:cancel', 'call:hangup',
+  'rtc:offer', 'rtc:answer', 'rtc:ice']);
+const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ROOM_RE = /^[A-Z0-9_-]{3,24}$/;
+const TERMINAL_RE = /^[A-Z0-9][A-Z0-9_-]{0,23}$/;
+const PLACE_RE = /^[A-Z0-9][A-Z0-9_-]{0,11}$/;
+// control characters, zero-width and bidi overrides: not allowed in a display name
+const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
 const peers = new Map<string, Peer>();
 const rooms = new Map<string, Set<Peer>>();
 
@@ -59,6 +99,27 @@ function close(peer: Peer, code = 1000) {
   peer.socket.end();
   setTimeout(() => peer.socket.destroy(), 800).unref();
 }
+function take(b: Bucket, rate: { cap: number; perSec: number }, now = Date.now()): boolean {
+  b.tokens = Math.min(rate.cap, b.tokens + ((now - b.last) / 1000) * rate.perSec);
+  b.last = now;
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
+function cleanName(v: unknown): string {
+  return typeof v === 'string' ? v.normalize('NFC').replace(UNSAFE_CHARS, '').replace(/\s+/g, ' ').trim() : '';
+}
+function cleanCode(v: unknown, re: RegExp): string {
+  if (typeof v !== 'string') return '';
+  const code = v.trim().toUpperCase();
+  return re.test(code) ? code : '';
+}
+function info(p: Peer) {
+  return { id: p.id, name: p.name, terminal: p.terminal || undefined, place: p.place || undefined, busy: Boolean(p.call) };
+}
+function status(...list: Peer[]) {
+  for (const p of list) if (p.joined) broadcast(p.room, { type: 'peer:status', id: p.id, busy: Boolean(p.call) }, p.id);
+}
 function other(peer: Peer): Peer | undefined {
   const target = peer.call && peers.get(peer.call.with);
   return target?.call?.with === peer.id ? target : undefined;
@@ -70,9 +131,11 @@ function endCall(peer: Peer, messageType: 'call:reject' | 'call:cancel' | 'call:
     send(target, { type: messageType, from: peer.id, reason });
   }
   peer.call = null;
+  if (target) status(target);
+  if (peers.has(peer.id)) status(peer);
 }
 function roomPeers(room: string) {
-  return [...(rooms.get(room) ?? [])].map(p => ({ id: p.id, name: p.name }));
+  return [...(rooms.get(room) ?? [])].map(info);
 }
 function broadcast(room: string, data: object, exclude?: string) {
   for (const peer of rooms.get(room) ?? []) if (peer.id !== exclude) send(peer, data);
@@ -87,49 +150,62 @@ function leave(peer: Peer) {
   if (room?.size === 0) rooms.delete(peer.room);
   broadcast(peer.room, { type: 'peer:left', id: peer.id });
 }
-function error(peer: Peer, message: string) { send(peer, { type: 'error', message }); }
+/** `code` is stable (the client translates it), `message` is the English fallback. */
+function error(peer: Peer, code: string, message: string) { send(peer, { type: 'error', code, message }); }
 function targetInRoom(peer: Peer, id: unknown): Peer | undefined {
-  if (typeof id !== 'string' || id === peer.id) return;
+  if (typeof id !== 'string' || !ID_RE.test(id) || id === peer.id) return;
   const target = peers.get(id);
   return target?.joined && target.room === peer.room ? target : undefined;
 }
 function handle(peer: Peer, data: Payload) {
+  if (typeof data.type !== 'string' || !TYPES.has(data.type)) return error(peer, 'unknown', 'Unknown command.');
+  if (!take(peer.msgBucket, MSG_RATE)) {
+    if (++peer.strikes > MAX_STRIKES) return close(peer, 1008);
+    return error(peer, 'rate', 'Too many messages, slow down.');
+  }
   if (data.type === 'join') {
-    if (peer.joined) return error(peer, 'Already joined.');
-    const name = typeof data.name === 'string' ? data.name.trim() : '';
+    if (peer.joined) return error(peer, 'joined', 'Already joined.');
+    const name = cleanName(data.name);
     const room = typeof data.room === 'string' ? data.room.trim().toUpperCase() : '';
-    if (name.length < 2 || name.length > 40 || !/^[A-Z0-9_-]{3,24}$/.test(room))
-      return error(peer, 'Use a name of 2-40 characters and a room code of 3-24 letters/numbers.');
+    if ([...name].length < 2 || [...name].length > 40 || !ROOM_RE.test(room))
+      return error(peer, 'invalid', 'Use a name of 2-40 characters and a room code of 3-24 letters/numbers.');
     const members = rooms.get(room) ?? new Set<Peer>();
-    if (members.size >= MAX_ROOM_PEERS) return error(peer, 'This channel is full.');
+    if (!rooms.has(room) && rooms.size >= MAX_ROOMS) return error(peer, 'rooms-full', 'Too many channels on this server.');
+    if (members.size >= MAX_ROOM_PEERS) return error(peer, 'full', 'This channel is full.');
     peer.name = name;
     peer.room = room;
+    peer.terminal = cleanCode(data.terminal, TERMINAL_RE);
+    peer.place = cleanCode(data.place, PLACE_RE);
     peer.joined = true;
     clearTimeout(peer.joinedTimeout);
     const existing = roomPeers(room);
     members.add(peer);
     rooms.set(room, members);
     send(peer, { type: 'welcome', id: peer.id, room, peers: existing });
-    broadcast(room, { type: 'peer:joined', peer: { id: peer.id, name } }, peer.id);
+    broadcast(room, { type: 'peer:joined', peer: info(peer) }, peer.id);
     return;
   }
-  if (!peer.joined) return error(peer, 'Join a channel first.');
+  if (!peer.joined) return error(peer, 'not-joined', 'Join a channel first.');
 
   if (data.type === 'call:invite') {
+    if (!take(peer.inviteBucket, INVITE_RATE)) return error(peer, 'rate', 'Too many calls, wait a moment.');
     const target = targetInRoom(peer, data.to);
-    if (!target) return error(peer, 'Crew member is no longer online.');
-    if (peer.call) return error(peer, 'You are already in a call.');
+    if (!target) return error(peer, 'offline', 'Crew member is no longer online.');
+    if (peer.call) return error(peer, 'in-call', 'You are already in a call.');
     if (target.call) return send(peer, { type: 'call:reject', from: target.id, reason: 'busy' });
+    const media: Media = data.media === 'audio' ? 'audio' : 'video';
     peer.call = { with: target.id, side: 'caller', accepted: false };
     target.call = { with: peer.id, side: 'callee', accepted: false };
-    send(target, { type: 'call:invite', from: peer.id, name: peer.name });
+    send(target, { type: 'call:invite', from: peer.id, name: peer.name,
+      terminal: peer.terminal || undefined, place: peer.place || undefined, media });
+    status(peer, target);
     return;
   }
 
   if (data.type === 'call:accept') {
     const target = other(peer);
     if (!target || peer.call?.side !== 'callee' || target.id !== data.to || peer.call.accepted)
-      return error(peer, 'There is no incoming call to accept.');
+      return error(peer, 'no-call', 'There is no incoming call to accept.');
     peer.call.accepted = true;
     target.call!.accepted = true;
     send(target, { type: 'call:accept', from: peer.id });
@@ -168,7 +244,6 @@ function handle(peer: Peer, data: Payload) {
     }
     return;
   }
-  error(peer, 'Unknown command.');
 }
 
 function processText(peer: Peer, bytes: Buffer) {
@@ -176,8 +251,8 @@ function processText(peer: Peer, bytes: Buffer) {
   try { raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch { return close(peer, 1007); }
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return error(peer, 'Invalid JSON.'); }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return error(peer, 'Invalid event.');
+  try { parsed = JSON.parse(raw); } catch { return error(peer, 'json', 'Invalid JSON.'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return error(peer, 'json', 'Invalid event.');
   handle(peer, parsed as Payload);
 }
 
@@ -239,19 +314,16 @@ export function attachCrewVideoWebSocket(server: Server) {
     try { path = new URL(req.url ?? '/', 'http://localhost').pathname; } catch { /* bad path */ }
     if (path !== PATH) { socket.destroy(); return; }
     const key = req.headers['sec-websocket-key'];
-    const origin = req.headers.origin;
-    const host = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? '';
-    let acceptableOrigin = !origin;
-    if (origin) {
-      try {
-        const from = new URL(origin);
-        const requestedHost = new URL(`http://${host}`);
-        acceptableOrigin = from.host === host ||
-          (['localhost', '127.0.0.1', '[::1]'].includes(from.hostname) && from.hostname === requestedHost.hostname);
-      } catch { acceptableOrigin = false; }
+    // same rule as the chat API: no Origin (non-browser), this host, localhost or ALLOWED_ORIGINS
+    const acceptableOrigin = originAllowed(req);
+    const ip = clientIp(req);
+    let fromIp = 0;
+    for (const p of peers.values()) if (p.ip === ip) fromIp++;
+    if (peers.size >= MAX_CONNECTIONS || fromIp >= MAX_PER_IP) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 10\r\n\r\n');
+      return;
     }
-    if (peers.size >= MAX_CONNECTIONS ||
-        req.headers.upgrade?.toLowerCase() !== 'websocket' ||
+    if (req.headers.upgrade?.toLowerCase() !== 'websocket' ||
         req.headers['sec-websocket-version'] !== '13' ||
         typeof key !== 'string' || !/^[A-Za-z0-9+/]{22}==$/.test(key) ||
         Buffer.from(key, 'base64').length !== 16 || !acceptableOrigin) {
@@ -263,8 +335,11 @@ export function attachCrewVideoWebSocket(server: Server) {
     const id = randomUUID();
     const peer: Peer = {
       id, socket, buffer: Buffer.alloc(0), fragments: [], fragmentLength: 0,
-      joined: false, alive: true, name: '', room: '', call: null,
+      joined: false, alive: true, name: '', room: '', terminal: '', place: '', ip, call: null,
       joinedTimeout: setTimeout(() => close(peer, 1008), 10_000),
+      msgBucket: { tokens: MSG_RATE.cap, last: Date.now() },
+      inviteBucket: { tokens: INVITE_RATE.cap, last: Date.now() },
+      strikes: 0,
     };
     peer.joinedTimeout.unref();
     peers.set(id, peer);

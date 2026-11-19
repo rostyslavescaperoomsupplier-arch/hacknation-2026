@@ -1,0 +1,19 @@
+[Unit]
+Description=Jantar crew database (teammates' crew/ server, branch statystyki) - localhost only
+After=network.target
+
+[Service]
+WorkingDirectory=/var/www/jantar-crew
+Environment=PORT=8790
+Environment=CREW_DB=/var/www/jantar-crew/data/crew.db
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.ts
+Restart=always
+User=www-data
+Group=www-data
+MemoryMax=200M
+# not reachable from outside: only the assistant on this host talks to it
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

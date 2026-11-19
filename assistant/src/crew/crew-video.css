@@ -1,50 +1,122 @@
-.crew-video .crew-chip {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  min-height: 46px;
-  padding: 4px 10px;
-  gap: 8px;
-  border: 1px solid var(--c-line);
-  border-radius: 12px;
-  background: var(--c-paper);
-  font-size: 0.9rem;
+/* Łączność (crew calls): app tokens from src/styles.css; mobile first (360 px), 44 px targets. */
+.crew-video .cv-status {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px;
+  border: 1px solid var(--c-line); border-radius: 999px; background: var(--c-paper);
+  font-size: 0.8125rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-ink-2);
 }
-.crew-video .crew-call-action { min-height: 36px; }
-.crew-video .crew-call-alert {
-  border: 1px solid var(--c-gold);
-  border-radius: 12px;
-  padding: 16px;
-  background: var(--c-paper);
+.cv-dot { inline-size: 10px; block-size: 10px; border-radius: 50%; flex: none; background: var(--c-line); box-shadow: inset 0 0 0 1px var(--c-ink-2); }
+.cv-dot.is-on, .crew-video .cv-status.is-on .cv-dot { background: var(--c-ok); box-shadow: none; }
+.cv-dot.is-busy { background: var(--c-gold); box-shadow: none; }
+.crew-video .cv-status.is-wait .cv-dot { background: var(--c-gold); box-shadow: none; animation: cv-blink 1.2s ease-in-out infinite; }
+.crew-video .cv-status.is-on { color: var(--c-ok); }
+
+.crew-video .cv-badge {
+  display: grid; place-items: center; inline-size: 44px; block-size: 44px; flex: none;
+  border-radius: var(--radius-card); background: var(--c-paper-2); color: var(--c-teal); border: 1px solid var(--c-line);
 }
-.crew-video .crew-videos { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr); gap: 10px; }
-.crew-video .crew-video-frame {
-  background: #121820;
-  color: #fff;
-  position: relative;
-  min-height: 180px;
-  aspect-ratio: 16 / 9;
-  border-radius: 14px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.crew-video .cv-warn {
+  border-inline-start: 3px solid var(--c-gold); background: var(--c-paper); padding: 8px 12px;
+  font-size: 0.9375rem; color: var(--c-gold-ink); border-radius: var(--radius-card);
 }
-.crew-video .crew-video-frame video { width: 100%; height: 100%; object-fit: cover; background: #121820; }
-.crew-video .crew-video-local video { transform: scaleX(-1); }
-.crew-video .crew-video-label {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  border-radius: 8px;
-  padding: 4px 8px;
-  background: #0009;
-  font-size: 0.78rem;
+
+/* buttons */
+.cv-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px;
+  border-radius: var(--radius-card); border: 1px solid transparent; font-weight: 600; font-size: 0.9375rem;
+  transition: background-color var(--dur-1) ease, color var(--dur-1) ease, transform var(--dur-1) var(--ease-out);
+  cursor: pointer;
 }
-.crew-video .crew-video-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: #fff9; pointer-events: none; }
-.crew-video button:disabled { cursor: not-allowed; }
-@media (max-width: 640px) {
-  .crew-video .crew-videos { grid-template-columns: 1fr; }
-  .crew-video .crew-video-frame { min-height: 120px; }
-  .crew-video .crew-video-local { position: relative; }
+.cv-btn:active:not(:disabled) { transform: scale(0.98); }
+.cv-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.cv-btn-ink { background: var(--c-navy); color: var(--c-paper); }
+.cv-btn-line { background: var(--c-paper); color: var(--c-ink); border-color: var(--c-line); }
+.cv-btn-line:hover:not(:disabled) { border-color: var(--c-ink-2); }
+.cv-btn-ok { background: var(--c-ok); color: var(--c-paper); }
+.cv-btn-danger { background: var(--c-danger); color: var(--c-paper); }
+.cv-btn-warn { background: var(--c-paper); color: var(--c-gold-ink); border-color: var(--c-gold); }
+.cv-big { min-height: 52px; font-size: 1.0625rem; }
+
+/* "Połącz z mostkiem": the one emergency shortcut, full width, fire red */
+.crew-video .cv-bridge {
+  display: flex; align-items: center; gap: 14px; inline-size: 100%; min-height: 72px; padding: 12px 16px;
+  border-radius: var(--radius-card); background: var(--c-danger); color: var(--c-paper); border: 0; cursor: pointer;
+  transition: transform var(--dur-1) var(--ease-out), opacity var(--dur-1) ease;
 }
+.crew-video .cv-bridge .tech-title { color: inherit; }
+.crew-video .cv-bridge:active:not(:disabled) { transform: scale(0.99); }
+.crew-video .cv-bridge:disabled { background: var(--c-paper-2); color: var(--c-ink-2); border: 1px dashed var(--c-line); cursor: not-allowed; }
+.crew-video .cv-bridge-icon {
+  display: grid; place-items: center; inline-size: 48px; block-size: 48px; flex: none;
+  border-radius: 50%; border: 2px solid currentColor;
+}
+
+/* terminal list */
+.crew-video .cv-list { list-style: none; margin: 0; padding: 0; }
+.crew-video .cv-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--c-line); }
+.crew-video .cv-row:first-child { border-top: 0; }
+.crew-video .cv-row.is-off { color: var(--c-ink-2); min-height: 44px; }
+.crew-video .cv-call-btn { padding: 0 10px; }
+.crew-video .cv-offline > summary, .crew-video .cv-adv > summary {
+  display: flex; align-items: center; cursor: pointer; font-size: 0.875rem; font-weight: 600; color: var(--c-ink-2);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+@media (max-width: 380px) {
+  /* 360 px phones: icon-only call buttons (the aria-label keeps the full name) */
+  .crew-video .cv-call-txt { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .crew-video .cv-call-btn { padding: 0; inline-size: 44px; }
+}
+.crew-video .cv-input {
+  inline-size: 100%; padding: 0 12px; border: 1px solid var(--c-ink-2); border-radius: var(--radius-card);
+  background: var(--c-paper); color: var(--c-ink); font: inherit;
+}
+
+/* call panel */
+.crew-video .cv-call { border-color: var(--c-ok); box-shadow: inset 0 3px 0 var(--c-ok); }
+.crew-video .cv-timer { font-family: var(--font-display); font-weight: 700; font-size: 1.25rem; color: var(--c-ok); }
+.crew-video .cv-stage {
+  position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-card); overflow: hidden;
+  background: #0b1820; /* fixed dark media surface in both themes */ color: #fff;
+}
+.crew-video .cv-stage > video { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
+.crew-video .cv-stage-msg { position: absolute; inset: 0; display: grid; place-items: center; color: #ffffffb3; font-size: 0.9375rem; pointer-events: none; }
+.crew-video .cv-pip {
+  position: absolute; inset-inline-end: 8px; inset-block-end: 8px; inline-size: 32%; aspect-ratio: 4 / 3;
+  border-radius: 4px; overflow: hidden; border: 2px solid #ffffffcc; background: #0b1820;
+}
+.crew-video .cv-pip video { inline-size: 100%; block-size: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+.crew-video .cv-pip-label {
+  position: absolute; inset-inline-start: 4px; inset-block-end: 4px; padding: 1px 6px; border-radius: 3px;
+  background: #000000a0; font-size: 0.75rem; color: #fff;
+}
+@media (min-width: 640px) { .crew-video .cv-stage { aspect-ratio: 16 / 9; } .crew-video .cv-pip { inline-size: 26%; } }
+.crew-video .cv-voice {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 168px;
+  border-radius: var(--radius-card); background: var(--c-paper-2); border: 1px solid var(--c-line); color: var(--c-ink-2);
+}
+.crew-video .cv-voice-ring {
+  display: grid; place-items: center; inline-size: 76px; block-size: 76px; border-radius: 50%;
+  background: var(--c-paper); color: var(--c-teal); border: 2px solid var(--c-teal);
+}
+.crew-video .cv-voice.is-ringing .cv-voice-ring { animation: cv-pulse 1.6s var(--ease-out) infinite; }
+.crew-video .cv-controls { display: flex; gap: 8px; }
+.crew-video .cv-ctl { flex: 1 1 0; min-width: 0; min-height: 56px; flex-direction: column; gap: 2px; font-size: 0.8125rem; padding: 4px 6px; text-align: center; }
+
+/* incoming call dialog (portal on document.body, above every tab) */
+.cv-overlay {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: end center; padding: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, #0d2633 62%, transparent);
+  animation: cv-fade var(--dur-2) ease both;
+}
+@media (min-width: 640px) { .cv-overlay { place-items: center; } }
+.cv-dialog {
+  inline-size: min(100%, 420px); padding: 20px; border-top: 4px solid var(--c-gold);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.28); animation: cv-rise var(--dur-2) var(--ease-out) both;
+}
+.cv-dialog-kicker { display: flex; align-items: center; gap: 8px; color: var(--c-gold-ink); }
+.cv-ring-dot { inline-size: 10px; block-size: 10px; border-radius: 50%; background: var(--c-gold); animation: cv-blink 0.8s ease-in-out infinite; }
+
+@keyframes cv-blink { 50% { opacity: 0.25; } }
+@keyframes cv-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-teal) 45%, transparent); } 100% { box-shadow: 0 0 0 18px transparent; } }
+@keyframes cv-fade { from { opacity: 0; } }
+@keyframes cv-rise { from { opacity: 0; transform: translateY(16px); } }

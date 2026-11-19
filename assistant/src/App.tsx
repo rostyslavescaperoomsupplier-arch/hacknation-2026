@@ -1,7 +1,10 @@
 // App shell: header (wordmark, language toggle), tabs with hash routing, shared state between the panels.
-// Tabs: #asystent (chat) | #statek (ShipPanel model) | #ewakuacja (ShipPanel evac) | #cwiczenia (DrillsPanel).
+// Tabs: #asystent (chat) | #statek (ShipPanel model) | #ewakuacja (ShipPanel evac) | #cwiczenia (DrillsPanel)
+//       | #lacznosc (crew voice / video calls between terminals, src/crew/).
 // One ShipPanel instance serves both ship tabs (only its mode changes), so the 10 MB model loads once;
 // it stays mounted under `hidden` and pauses itself when not visible.
+// The comms panel is mounted from the start (not lazily): a configured terminal must be reachable from every tab,
+// its incoming-call dialog is a portal above the whole app.
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import Assistant from './Assistant';
 import { STR } from './i18n';
@@ -11,12 +14,22 @@ import type { DrillId } from './drills/data';
 // System anty-rzyg: kropki ruchu przy krawędziach ekranu przeciw chorobie morskiej (jak Vehicle Motion Cues w iOS).
 // Zawsze włączony na każdej karcie, bez wyłącznika; sam dobiera intensywność do ruchu statku. Szczegóły: src/motion-cues/.
 import MotionCues from './motion-cues/MotionCues';
+import CrewVideoChat from './crew/CrewVideoChat';
 
 const ShipPanel = lazy(() => import('./ship/ShipPanel'));
 const DrillsPanel = lazy(() => import('./drills/DrillsPanel'));
 
-type Tab = 'asystent' | 'statek' | 'ewakuacja' | 'cwiczenia';
-const TABS: Tab[] = ['asystent', 'statek', 'ewakuacja', 'cwiczenia'];
+type Tab = 'asystent' | 'statek' | 'ewakuacja' | 'cwiczenia' | 'lacznosc';
+const TABS: Tab[] = ['asystent', 'statek', 'ewakuacja', 'cwiczenia', 'lacznosc'];
+
+// Phone bottom bar: 5 tabs at 360 px = 72 px each, so an icon above a short label (desktop: label only).
+const TAB_ICON: Record<Tab, string[]> = {
+  asystent: ['M4 5h16v11H9l-4 3.5V16H4Z', 'M8 9.5h8', 'M8 12.5h5'],
+  statek: ['M2.5 14.5h19l-2.5 5h-14Z', 'M6 14.5v-4h12v4', 'M9 10.5V7h5v3.5', 'M11.5 7V4'],
+  ewakuacja: ['M13.5 4.5a1.5 1.5 0 1 0 0.01 0', 'M10 20l2-5.5 2.5 2.5V20', 'M8 11l3-3h3l2 3.5 2.5 1', 'M12 14.5 11 8'],
+  cwiczenia: ['M6 4h12v16H6Z', 'M9 8.5l1.2 1.2L12.5 7.5', 'M9 13.5l1.2 1.2 2.3-2.2', 'M14.5 9h1.5', 'M14.5 14h1.5'],
+  lacznosc: ['M5 3.5h4l1.5 4.5-2.5 2 6 6 2-2.5 4.5 1.5v4l-2 1.5h-2L3.5 7.5v-2Z', 'M15 3.5a5.5 5.5 0 0 1 5.5 5.5', 'M14.5 7a2.5 2.5 0 0 1 2.5 2.5'],
+};
 
 function tabFromHash(): Tab {
   const h = location.hash.replace(/^#/, '');
@@ -33,7 +46,7 @@ export default function App({ initialLang }: { initialLang: Lang }) {
   // panels mount on first visit and then stay (hidden) so their state survives tab switches
   const [seen, setSeen] = useState<Set<Tab>>(() => new Set([tabFromHash()]));
   const [typing, setTyping] = useState(false);
-  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ asystent: null, statek: null, ewakuacja: null, cwiczenia: null });
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ asystent: null, statek: null, ewakuacja: null, cwiczenia: null, lacznosc: null });
 
   const setTab = useCallback((t: Tab) => {
     setTabState(t);
@@ -80,7 +93,13 @@ export default function App({ initialLang }: { initialLang: Lang }) {
     setTab('cwiczenia');
   }, [setTab]);
 
-  const label: Record<Tab, string> = { asystent: s.tab_assistant, statek: s.tab_ship, ewakuacja: s.tab_evac, cwiczenia: s.tab_drills };
+  const label: Record<Tab, string> = {
+    asystent: s.tab_assistant, statek: s.tab_ship, ewakuacja: s.tab_evac, cwiczenia: s.tab_drills,
+    lacznosc: lang === 'pl' ? 'Łączność' : 'Comms',
+  };
+  // shorter phone labels where the desktop one does not fit 72 px
+  const short: Partial<Record<Tab, string>> = lang === 'pl' ? { statek: 'Statek' } : { statek: 'Ship', ewakuacja: 'Evac' };
+  const openComms = useCallback(() => setTab('lacznosc'), [setTab]);
 
   function onTabKey(e: KeyboardEvent<HTMLButtonElement>) {
     const i = TABS.indexOf(tab);
@@ -110,15 +129,22 @@ export default function App({ initialLang }: { initialLang: Lang }) {
           </a>
 
           <div role="tablist" aria-label={s.tabs_label}
-               className="app-tabs fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)]
+               className="app-tabs fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)]
                           lg:static lg:ml-6 lg:flex lg:self-stretch lg:border-t-0 lg:bg-transparent lg:pb-0">
             {TABS.map((t) => (
               <button key={t} ref={(el) => { tabRefs.current[t] = el; }} type="button" role="tab" id={`tab-${t}`}
                       aria-selected={tab === t} aria-controls={t === 'statek' || t === 'ewakuacja' ? 'panel-ship' : `panel-${t}`}
                       tabIndex={tab === t ? 0 : -1} onClick={() => setTab(t)} onKeyDown={onTabKey}
-                      className="app-tab tap relative min-h-[52px] px-1 text-[0.8125rem] font-semibold uppercase tracking-[0.06em] text-ink-2
-                                 hover:text-ink aria-selected:text-ink lg:px-4 lg:text-sm">
-                {label[t]}
+                      aria-label={short[t] ? label[t] : undefined}
+                      className="app-tab tap relative flex min-h-[52px] min-w-0 flex-col items-center justify-center gap-0.5 px-0.5
+                                 text-[0.6875rem] font-semibold uppercase tracking-[0.02em] text-ink-2
+                                 hover:text-ink aria-selected:text-ink lg:flex-row lg:px-4 lg:text-sm lg:tracking-[0.06em]">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}
+                     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className="shrink-0 lg:hidden">
+                  {TAB_ICON[t].map((d, i) => <path key={i} d={d} />)}
+                </svg>
+                <span className="max-w-full truncate lg:hidden">{short[t] ?? label[t]}</span>
+                <span className="hidden lg:inline">{label[t]}</span>
               </button>
             ))}
           </div>
@@ -163,6 +189,11 @@ export default function App({ initialLang }: { initialLang: Lang }) {
               <DrillsPanel lang={lang} drill={drill} onShowRoute={(z: ZoneId, b?: Stair | null) => showRoute(z, b ?? null)} />
             </Suspense>
           )}
+        </section>
+
+        <section id="panel-lacznosc" role="tabpanel" aria-labelledby="tab-lacznosc" hidden={tab !== 'lacznosc'}
+                 className="mx-auto max-w-6xl px-4 py-4">
+          <CrewVideoChat lang={lang} onOpen={openComms} />
         </section>
       </main>
 

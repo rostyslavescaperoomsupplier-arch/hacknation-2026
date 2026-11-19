@@ -1,12 +1,30 @@
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import assert from 'node:assert/strict';
-import { attachCrewVideoWebSocket } from '../assistant/server/crew-video.ts';
+// small caps so the limits can be exercised quickly (read once when the module loads)
+process.env.CREW_VIDEO_MAX_ROOMS = '3';
+process.env.CREW_VIDEO_MAX_PER_IP = '14';
+const { attachCrewVideoWebSocket } = await import('../assistant/server/crew-video.ts');
 
 const http = createServer((_req, res) => res.end('ok'));
 attachCrewVideoWebSocket(http);
 await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
 const port = http.address().port;
 const clients = [];
+/** Raw upgrade request with a chosen Origin header -> HTTP status of the answer (101 = accepted). */
+function upgradeStatus(origin) {
+  return new Promise((resolve, reject) => {
+    const headers = {
+      connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13',
+      'sec-websocket-key': Buffer.from('0123456789abcdef').toString('base64'),
+    };
+    if (origin) headers.origin = origin;
+    const req = request({ host: '127.0.0.1', port, path: '/crew-video-ws', headers });
+    req.on('upgrade', (res, socket) => { socket.destroy(); resolve(res.statusCode); });
+    req.on('response', res => { res.resume(); resolve(res.statusCode); });
+    req.on('error', reject);
+    req.end();
+  });
+}
 function connect() {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/crew-video-ws`);
   clients.push(ws);
@@ -83,6 +101,106 @@ try {
   await alice.wait('call:hangup', x => x.from === b.id);
   await alice.wait('peer:left', x => x.id === b.id);
   console.log('PASS: presence, isolated rooms, invitations, busy, acceptance, SDP, ICE, 10 KB SDP, hangup, decline, disconnect');
+
+  // ---- validation and abuse limits ----
+  // Origin: same rule as the chat API (guard.ts originAllowed)
+  assert.equal(await upgradeStatus('https://evil.example'), 403);
+  assert.equal(await upgradeStatus('http://localhost:5174'), 101);
+  assert.equal(await upgradeStatus(undefined), 101);
+
+  // terminal identity is validated, normalised and shared; unknown fields are not echoed
+  const bridge = connect(), deck = connect();
+  await Promise.all([bridge.ready, deck.ready]);
+  bridge.send('join', { name: 'Mostek\u202e\u0007  nawigacyjny', room: 'SHIP-01', terminal: 't-d4-01-a', place: 'd4-01', admin: true });
+  const bw = await bridge.wait('welcome');
+  const joinedEvt = await carol.wait('peer:joined', x => x.peer.id === bw.id);
+  assert.equal(joinedEvt.peer.name, 'Mostek nawigacyjny');
+  assert.equal(joinedEvt.peer.terminal, 'T-D4-01-A');
+  assert.equal(joinedEvt.peer.place, 'D4-01');
+  assert.equal(joinedEvt.peer.busy, false);
+  assert.equal('admin' in joinedEvt.peer, false);
+  deck.send('join', { name: 'Pokład', room: 'SHIP-01', terminal: 'T-D2-01-A; DROP', place: '<script>' });
+  const dw = await deck.wait('welcome');
+  const listed = dw.peers.find(x => x.id === bw.id);
+  assert.equal(listed.terminal, 'T-D4-01-A');
+  const deckSeen = await bridge.wait('peer:joined', x => x.peer.id === dw.id);
+  assert.equal(deckSeen.peer.terminal, undefined);
+  assert.equal(deckSeen.peer.place, undefined);
+
+  // invalid join, unknown command, missing type, bad target id
+  const junk = connect();
+  await junk.ready;
+  junk.send('join', { name: 'x'.repeat(41), room: 'SHIP-01' });
+  await junk.wait('error', e => e.code === 'invalid');
+  junk.send('join', { name: '\u0000\u0001', room: 'SHIP-01' });
+  await junk.wait('error', e => e.code === 'invalid' && junk.events.filter(x => x.code === 'invalid').length === 2);
+  junk.send('nope');
+  await junk.wait('error', e => e.code === 'unknown');
+  junk.ws.send(JSON.stringify({ to: 'x' }));
+  await junk.wait('error', e => e.code === 'unknown' && junk.events.filter(x => x.code === 'unknown').length === 2);
+  junk.send('call:invite', { to: bw.id });
+  await junk.wait('error', e => e.code === 'not-joined');
+  deck.send('call:invite', { to: '../' + bw.id });
+  await deck.wait('error', e => e.code === 'offline');
+
+  // media type is forwarded, busy state is broadcast to the rest of the channel
+  deck.send('call:invite', { to: bw.id, media: 'audio' });
+  const inv = await bridge.wait('call:invite', x => x.from === dw.id);
+  assert.equal(inv.media, 'audio');
+  assert.equal(inv.name, 'Pokład');
+  await carol.wait('peer:status', x => x.id === bw.id && x.busy === true);
+  await carol.wait('peer:status', x => x.id === dw.id && x.busy === true);
+  deck.send('call:cancel', { to: bw.id });
+  await bridge.wait('call:cancel', x => x.from === dw.id);
+  await carol.wait('peer:status', x => x.id === bw.id && x.busy === false);
+  deck.send('call:invite', { to: bw.id, media: 'hologram' });
+  await bridge.wait('call:invite', () => bridge.events.filter(e => e.type === 'call:invite').length === 2);
+  assert.equal(bridge.events.filter(e => e.type === 'call:invite')[1].media, 'video');
+  bridge.send('call:reject', { to: dw.id });
+  await deck.wait('call:reject', x => x.reason === 'declined');
+
+  // invitation rate limit: 6 in a burst (deck already used 3)
+  for (let i = 0; i < 6; i++) deck.send('call:invite', { to: '00000000-0000-0000-0000-000000000000' });
+  await deck.wait('error', e => e.code === 'rate');
+
+  // message rate limit: a flood is answered with `rate` errors and then the connection is closed (1008)
+  const flood = connect();
+  await flood.ready;
+  flood.send('join', { name: 'Flood', room: 'SHIP-01' });
+  await flood.wait('welcome');
+  const closed = new Promise(resolve => flood.ws.addEventListener('close', e => resolve(e.code), { once: true }));
+  for (let i = 0; i < 150; i++) flood.send('rtc:ice', { to: bw.id, candidate: { candidate: 'x' } });
+  assert.equal(await closed, 1008);
+  assert.ok(flood.events.some(e => e.code === 'rate'));
+
+  // oversized message closes the connection (1009)
+  const big = connect();
+  await big.ready;
+  const bigClosed = new Promise(resolve => big.ws.addEventListener('close', e => resolve(e.code), { once: true }));
+  big.ws.send(JSON.stringify({ type: 'join', name: 'x'.repeat(40_000), room: 'SHIP-01' }));
+  assert.equal(await bigClosed, 1009);
+
+  // channel cap: SHIP-01 and SHIP-02 exist, one more fits, the next is refused
+  const r3 = connect(), r4 = connect();
+  await Promise.all([r3.ready, r4.ready]);
+  r3.send('join', { name: 'Room three', room: 'SHIP-03' });
+  await r3.wait('welcome');
+  r4.send('join', { name: 'Room four', room: 'SHIP-04' });
+  await r4.wait('error', e => e.code === 'rooms-full');
+
+  // connections per IP: further upgrades get 503 once the cap is reached
+  const extra = [];
+  let refused = 0;
+  for (let i = 0; i < 16 && !refused; i++) {
+    const c = connect();
+    extra.push(c);
+    await c.ready.catch(() => { refused++; });
+  }
+  assert.equal(refused, 1);
+  console.log('PASS: origin check, terminal identity, name sanitising, unknown/invalid messages, media type, busy status, invite + message rate limits, size limit, channel cap, per-IP cap');
+} catch (e) {
+  process.exitCode = 1;
+  console.error(e);
 } finally {
   for (const ws of clients) try { ws.close(); } catch { /* ignore */ }
   await Promise.all(clients.map(ws => new Promise(resolve => {
@@ -90,5 +208,6 @@ try {
     ws.addEventListener('close', resolve, { once: true });
     setTimeout(resolve, 1500).unref();
   })));
-  await new Promise(resolve => http.close(resolve));
+  http.closeAllConnections?.();
+  await new Promise(resolve => { http.close(resolve); setTimeout(resolve, 300); });
 }
