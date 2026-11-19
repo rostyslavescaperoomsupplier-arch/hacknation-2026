@@ -450,8 +450,8 @@ export class ShipView {
     const el = document.createElement('div');
     el.textContent = text;
     const bg = kind === 'start' ? 'var(--c-gold-ink)' : kind === 'muster' ? 'var(--c-ok)' : 'var(--c-danger)';
-    el.style.cssText = `position:absolute;left:0;top:0;transform:translate(-50%,-100%);white-space:nowrap;font:600 12px/1.2 var(--font-sans, system-ui);` +
-      `letter-spacing:.04em;text-transform:uppercase;color:#fff;background:${bg};padding:3px 7px;border-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,.25)`;
+    el.style.cssText = `position:absolute;left:0;top:0;transform:translate(-50%,-100%);white-space:nowrap;font:700 13px/1.2 var(--font-sans, system-ui);` +
+      `letter-spacing:.04em;text-transform:uppercase;color:var(--c-on-strong, #fff);background:${bg};padding:4px 8px;border-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,.25)`;
     this.overlay.appendChild(el);
     this.labels.push({ el, pos });
   }

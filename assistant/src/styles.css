@@ -16,6 +16,7 @@
   --color-danger: var(--c-danger);
   --color-teal: var(--c-teal);
   --color-navy: var(--c-navy);
+  --color-on-strong: var(--c-on-strong);
   --text-xs: 0.8125rem;
   --text-xs--line-height: 1.4;
   --text-sm: 0.9375rem;
@@ -44,31 +45,77 @@
   --ease-out: cubic-bezier(.2, .8, .2, 1);
   --dur-1: 150ms;
   --dur-2: 220ms;
+  /* text / icons on a filled status or ink surface (bg-ok, bg-danger, bg-gold-ink, bg-navy) */
+  --c-on-strong: #ffffff;
+  --canvas-filter: none;
+  --img-filter: none;
+  /* anti-seasickness dots (src/motion-cues) read this; follows the theme ink, red in night mode */
+  --motion-dot-color: var(--c-ink);
+  /* spacing scale (4 px base) and the side gutter: 24 px keeps content clear of the motion-cue dot band (7..19 px) */
+  --sp-1: 0.25rem; --sp-2: 0.5rem; --sp-3: 0.75rem; --sp-4: 1rem; --sp-6: 1.5rem; --sp-8: 2rem;
+  --gutter: 1.5rem;
+  --tap: 48px;      /* gloves, wet hands, rolling ship */
+  --tap-lg: 56px;   /* critical actions */
   color-scheme: light;
 }
+/* Dark: the brightness-safe default when the device asks for dark (cabins, bridge before night mode is on).
+   Near-black page, soft (not white) ink, same status hues lifted for contrast. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --c-page: #0b1820; --c-paper: #12232d; --c-paper-2: #182d39; --c-ink: #e3edf2; --c-ink-2: #9fb5c1; --c-line: #2a4352;
-    --c-gold: #ff7a33; --c-gold-ink: #ff9a5c; --c-warn: #ff9a5c; --c-ok: #3fbf7f; --c-danger: #ff5a52; --c-teal: #4fb3c4; --c-navy: #e3edf2;
+  :root:not([data-theme="light"]):not([data-theme="night"]) {
+    --c-page: #081218; --c-paper: #0f1d26; --c-paper-2: #152833; --c-ink: #dbe6ec; --c-ink-2: #9cb2be; --c-line: #27404e;
+    --c-gold: #ff7a33; --c-gold-ink: #ff9a5c; --c-warn: #ff9a5c; --c-ok: #3fbf7f; --c-danger: #ff5a52; --c-teal: #4fb3c4; --c-navy: #dbe6ec;
+    --c-on-strong: #081218; --focus: #ff9a5c; --canvas-filter: brightness(0.92);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --c-page: #0b1820; --c-paper: #12232d; --c-paper-2: #182d39; --c-ink: #e3edf2; --c-ink-2: #9fb5c1; --c-line: #2a4352;
-  --c-gold: #ff7a33; --c-gold-ink: #ff9a5c; --c-warn: #ff9a5c; --c-ok: #3fbf7f; --c-danger: #ff5a52; --c-teal: #4fb3c4; --c-navy: #e3edf2;
+  --c-page: #081218; --c-paper: #0f1d26; --c-paper-2: #152833; --c-ink: #dbe6ec; --c-ink-2: #9cb2be; --c-line: #27404e;
+  --c-gold: #ff7a33; --c-gold-ink: #ff9a5c; --c-warn: #ff9a5c; --c-ok: #3fbf7f; --c-danger: #ff5a52; --c-teal: #4fb3c4; --c-navy: #dbe6ec;
+  --c-on-strong: #081218; --focus: #ff9a5c; --canvas-filter: brightness(0.92);
+  color-scheme: dark;
+}
+/* Night mode (mostek): red on black, low luminance, no white or blue light, so night vision survives a glance.
+   Every text colour stays >= 4.5:1 on the black page. Status keeps its meaning by hue family + shape + words:
+   danger = the brightest pure red (with a triangle), safety orange = amber, route green = dim olive. */
+:root[data-theme="night"] {
+  --c-page: #000000; --c-paper: #0b0202; --c-paper-2: #160504; --c-ink: #e65a40; --c-ink-2: #cc4a3a; --c-line: #3d1510;
+  --c-gold: #c96a18; --c-gold-ink: #e08a2a; --c-warn: #e08a2a; --c-ok: #6f9a34; --c-danger: #ff3326; --c-teal: #cc4a3a; --c-navy: #e65a40;
+  --c-on-strong: #000000; --focus: #e08a2a;
+  /* the 3D canvas has white light and blue-grey materials: collapse it to dim red */
+  --canvas-filter: grayscale(1) sepia(1) hue-rotate(-42deg) saturate(4) brightness(0.42);
+  /* images (Mewka) the same way, a little brighter */
+  --img-filter: grayscale(1) sepia(1) saturate(5) hue-rotate(-38deg) brightness(0.6);
   color-scheme: dark;
 }
 
-body { margin: 0; background: var(--c-page); color: var(--c-ink); font-family: var(--font-sans); }
+/* arm's-length reading: 16 px on phones, 17 px from tablets up (everything in rem scales with it) */
+html { font-size: 100%; -webkit-text-size-adjust: 100%; }
+@media (min-width: 600px) { html { font-size: 106.25%; } }
+body {
+  margin: 0; background: var(--c-page); color: var(--c-ink); font-family: var(--font-sans);
+  line-height: 1.5; font-variant-numeric: tabular-nums; -webkit-tap-highlight-color: transparent;
+  caret-color: var(--c-gold-ink); accent-color: var(--c-gold-ink);
+}
+::selection { background: color-mix(in srgb, var(--c-gold) 35%, transparent); color: var(--c-ink); }
+* { scrollbar-color: color-mix(in srgb, var(--c-ink) 35%, transparent) transparent; }
+input::placeholder, textarea::placeholder { color: var(--c-ink-2); opacity: 1; }
+:root[data-theme="night"] img, :root[data-theme="night"] .mewka, :root[data-theme="night"] video { filter: var(--img-filter); }
 .tech-title { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.05; color: var(--c-ink); }
 .tech-kicker { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--c-ink-2); }
 .panel { background: var(--c-paper); border: 1px solid var(--c-line); border-radius: var(--radius-card); }
-.tap { min-height: 44px; min-width: 44px; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.tap { min-height: var(--tap); min-width: var(--tap); }
+.tap-lg { min-height: var(--tap-lg); min-width: var(--tap-lg); }
+.gutter { padding-inline: var(--gutter); }
+/* focus: 3 px ring in the theme's focus colour plus a page-coloured halo, visible on light, dark, night and on filled buttons */
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; box-shadow: 0 0 0 2px var(--c-page); }
+/* status marks: shape + colour, never colour alone */
+.mark { display: inline-block; flex: none; width: 0.75rem; height: 0.75rem; }
+.mark-sq { background: var(--c-gold); border-radius: 2px; }
+.mark-tri { background: var(--c-danger); clip-path: polygon(50% 0, 100% 100%, 0 100%); width: 0.875rem; }
 /* ---- app shell (App.tsx) ----
    Phones: the tab bar is fixed to the bottom (52px targets + safe area); the chat composer sits on top of it.
    While the chat field has focus the bar steps aside so the composer can ride the keyboard. Desktop: top tabs. */
-.app { --tabbar-h: calc(52px + env(safe-area-inset-bottom)); }
+.app { --tabbar-h: calc(60px + env(safe-area-inset-bottom)); }
 .app-main { padding-bottom: var(--tabbar-h); }
 .app[data-typing] { --tabbar-h: 0px; }
 @media (max-width: 1023.98px) {
@@ -77,12 +124,23 @@ body { margin: 0; background: var(--c-page); color: var(--c-ink); font-family: v
 @media (min-width: 1024px) {
   .app { --tabbar-h: 0px; }
 }
-.app-tab { transition: color var(--dur-1) ease; }
+.app-tab { transition: color var(--dur-1) ease, background-color var(--dur-1) ease; }
+.app-tab:active { background: var(--c-paper-2); }
+/* selected: orange bar + filled icon tile + ink text (three cues, not colour alone) */
 .app-tab[aria-selected="true"]::before {
-  content: ""; position: absolute; inset-inline: 18%; top: 0; height: 3px; background: var(--c-gold);
+  content: ""; position: absolute; inset-inline: 14%; top: 0; height: 4px; background: var(--c-gold); border-radius: 0 0 2px 2px;
+}
+.app-tab-ic { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 1.75rem; border-radius: 999px; transition: background-color var(--dur-1) ease; }
+.app-tab[aria-selected="true"] .app-tab-ic { background: color-mix(in srgb, var(--c-gold) 16%, transparent); }
+@media (min-width: 1024px) { .app-tab-ic { display: none; } }
+/* six tabs on a 360 px phone: 60 px cells, slightly smaller label, the icon carries the recognition */
+@media (max-width: 419.98px) { .app-tab { font-size: 0.6875rem; letter-spacing: 0; } .app-tab-ic { width: 2.5rem; } }
+/* tablets: wide tab cells, so icon and label side by side, bigger label */
+@media (min-width: 600px) and (max-width: 1023.98px) {
+  .app-tab { flex-direction: row; gap: 0.5rem; font-size: 0.8125rem; }
 }
 @media (min-width: 1024px) {
-  .app-tab[aria-selected="true"]::before { top: auto; bottom: -1px; inset-inline: 12px; }
+  .app-tab[aria-selected="true"]::before { top: auto; bottom: -1px; inset-inline: 12px; border-radius: 2px 2px 0 0; }
 }
 .app [hidden] { display: none !important; }
 
@@ -92,6 +150,37 @@ body { margin: 0; background: var(--c-page); color: var(--c-ink); font-family: v
 .asst-act:active { transform: scale(0.98); }
 .asst-head { padding-inline: 30px 10px; }
 .asst-head .mewka--xl { inline-size: 120px; block-size: 120px; }
+@media (max-width: 599.98px) {
+  .asst-head { padding-inline: 0; }
+  .asst-head .mewka--xl { inline-size: 64px; block-size: 64px; }
+}
+/* Night mode: big filled surfaces would glow, so strong fills turn into dark tinted fills with a coloured edge and
+   coloured text (same meaning, a fraction of the light). Unlayered, so these win over the Tailwind utilities. */
+:root[data-theme="night"] :is(.bg-ink, .bg-navy, .hdr-btn[aria-pressed="true"]) { background-color: #3d0f0a; color: #f06a4c; box-shadow: inset 0 0 0 1px #8a2a1c; }
+:root[data-theme="night"] .bg-ok { background-color: #121c07; color: var(--c-ok); box-shadow: inset 0 0 0 2px var(--c-ok); }
+:root[data-theme="night"] .bg-danger { background-color: #2a0402; color: var(--c-danger); box-shadow: inset 0 0 0 2px var(--c-danger); }
+:root[data-theme="night"] .bg-gold-ink { background-color: #2a1404; color: var(--c-gold-ink); box-shadow: inset 0 0 0 2px var(--c-gold-ink); }
+:root[data-theme="night"] .chk:checked { background: #121c07; }
+:root[data-theme="night"] .chk::after { border-color: var(--c-ok); }
+
+/* header icon buttons (night mode, language) */
+.hdr-btn { transition: background-color var(--dur-1) ease, color var(--dur-1) ease; }
+.hdr-btn[aria-pressed="true"] { background: var(--c-navy); color: var(--c-on-strong); }
+
+/* 3D canvas: dimmed / tinted per theme (night: red). The textual route stays the source of truth. */
+.ship-stage { background: var(--c-paper-2); }
+.ship-stage > .ship-gl > canvas { filter: var(--canvas-filter); }
+
+/* drill: sticky "next step" bar above the phone tab bar (one-handed reach), inline on desktop */
+.next-bar { position: sticky; bottom: calc(var(--tabbar-h, 0px) + 0.5rem); z-index: 20; }
+@media (min-width: 1024px) { .next-bar { bottom: 1rem; } }
+.next-bar { box-shadow: 0 10px 28px -14px color-mix(in srgb, #000 60%, transparent); }
+/* the big checklist tick box */
+.chk { appearance: none; -webkit-appearance: none; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 4px; margin: 0;
+       border: 2px solid color-mix(in srgb, var(--c-ink) 60%, var(--c-paper)); background: var(--c-paper); display: grid; place-content: center; cursor: pointer; }
+.chk::after { content: ""; width: 0.95rem; height: 0.55rem; border: solid var(--c-on-strong); border-width: 0 0 3px 3px; transform: translateY(-2px) rotate(-45deg); opacity: 0; }
+.chk:checked { background: var(--c-ok); border-color: var(--c-ok); }
+.chk:checked::after { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }

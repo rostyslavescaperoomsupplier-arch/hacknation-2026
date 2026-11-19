@@ -48,13 +48,13 @@ function Segmented<T extends string>({ label, value, options, onChange, tone = '
   label: string; value: T; options: { value: T; label: string }[]; onChange(v: T): void; tone?: 'ink' | 'danger';
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex max-w-full flex-wrap rounded-card border border-line bg-paper p-0.5">
+    <div role="radiogroup" aria-label={label} className="grid w-full max-w-xl auto-cols-fr grid-flow-col gap-0.5 rounded-card border border-line bg-paper p-0.5">
       {options.map((o) => {
         const on = o.value === value;
-        const active = tone === 'danger' && o.value !== ('' as T) ? 'bg-danger text-paper' : 'bg-ink text-paper';
+        const active = tone === 'danger' && o.value !== ('' as T) ? 'bg-danger text-on-strong' : 'bg-ink text-on-strong';
         return (
           <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => onChange(o.value)}
-                  className={`tap rounded-[4px] px-3 text-sm font-semibold transition-colors ${on ? active : 'text-ink-2 hover:text-ink'}`}>
+                  className={`tap rounded-[4px] px-2 py-1 text-center text-sm font-semibold leading-tight transition-colors ${on ? active : 'text-ink-2 hover:bg-paper-2 hover:text-ink'}`}>
             {o.label}
           </button>
         );
@@ -232,8 +232,8 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
 
   const blockedOptions: { value: '' | Stair; label: string }[] = [
     { value: '', label: L(lang, 'Brak', 'None') },
-    { value: 'stair-aft', label: L(lang, 'Schody rufowe zablokowane', 'Aft stairwell blocked') },
-    { value: 'stair-fwd', label: L(lang, 'Schody dziobowe zablokowane', 'Forward stairwell blocked') },
+    { value: 'stair-aft', label: L(lang, 'Rufowa', 'Aft') },
+    { value: 'stair-fwd', label: L(lang, 'Dziobowa', 'Forward') },
   ];
 
   const canvasDesc = mode === 'evac'
@@ -242,32 +242,39 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
     : L(lang, 'Interaktywny model 3D promu. Obracaj przeciągnięciem, przybliżaj kółkiem lub gestem. Lista stref obok działa z klawiatury.',
         'Interactive 3D model of the ferry. Drag to rotate, scroll or pinch to zoom. The zone list next to it works with the keyboard.');
 
+  const evac = mode === 'evac';
+  const modelPicker = (
+    <Segmented label={L(lang, 'Model', 'Model')} value={model} onChange={(v) => setModel(v as ModelKey)}
+               options={MODELS.map((m) => ({ value: m.key, label: L(lang, m.pl, m.en) }))} />
+  );
+
+  // Layout: phones stack head / route / canvas in evacuation (the written route is the next action and comes first),
+  // head / canvas / zones when exploring. Desktop: head + canvas on the left, the side panel spans both rows.
   return (
-    <section ref={rootRef} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]" aria-labelledby={`${descId}-t`}>
-      <div className="min-w-0">
+    <section ref={rootRef} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:grid-rows-[auto_1fr] lg:gap-x-6" aria-labelledby={`${descId}-t`}>
+      <div className="order-1 min-w-0 lg:order-none lg:col-start-1 lg:row-start-1">
         <p className="tech-kicker">MF Jantar Unity</p>
         <h2 id={`${descId}-t`} className="tech-title mb-3 text-h2">
-          {mode === 'evac' ? L(lang, 'Droga ewakuacji', 'Evacuation route') : L(lang, 'Statek 3D', 'Ship 3D')}
+          {evac ? L(lang, 'Droga ewakuacji', 'Evacuation route') : L(lang, 'Statek 3D', 'Ship 3D')}
         </h2>
 
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <Segmented label={L(lang, 'Model', 'Model')} value={model} onChange={(v) => setModel(v as ModelKey)}
-                     options={MODELS.map((m) => ({ value: m.key, label: L(lang, m.pl, m.en) }))} />
-          {mode === 'model' && (
+        {!evac && (
+          <div className="flex flex-wrap items-center gap-2">
+            {modelPicker}
             <button type="button" aria-pressed={crewOn} onClick={() => { setCrewOn(!crewOn); setCrewSel(null); }}
                     className={`tap inline-flex items-center gap-2 rounded-card border px-3 text-sm font-semibold ${crewOn ? 'border-gold bg-paper text-ink' : 'border-line bg-paper text-ink-2 hover:text-ink'}`}>
-              <span aria-hidden="true" className={`inline-block h-3 w-3 rounded-[2px] border-2 ${crewOn ? 'border-gold bg-gold' : 'border-line'}`} />
+              <span aria-hidden="true" className={`inline-block h-3.5 w-3.5 rounded-[2px] border-2 ${crewOn ? 'border-gold bg-gold' : 'border-ink-2'}`} />
               {L(lang, 'Warstwa: Załoga', 'Layer: Crew')}
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
-        {mode === 'evac' && (
-          <div className="mb-3 flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
+        {evac && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex min-w-0 flex-col gap-1">
               <label htmlFor={zoneSelId} className="tech-kicker">{L(lang, 'Gdzie jesteś?', 'Where are you?')}</label>
               <select id={zoneSelId} value={evZone} onChange={(e) => pickZone(e.target.value as ZoneId)}
-                      className="tap w-full max-w-md rounded-card border border-line bg-paper px-3 text-sm font-semibold text-ink">
+                      className="tap-lg w-full rounded-card border-2 border-ink/50 bg-paper px-3 font-semibold text-ink">
                 {DECK_GROUPS.map((g) => (
                   <optgroup key={g.pl} label={L(lang, g.pl, g.en)}>
                     {g.zones.map((z) => <option key={z} value={z}>{tr(lang, ZONE[z].name)}</option>)}
@@ -275,51 +282,58 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
                 ))}
               </select>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex min-w-0 flex-col gap-1">
               <span className="tech-kicker">{L(lang, 'Zablokowana klatka schodowa', 'Blocked stairwell')}</span>
               <Segmented label={L(lang, 'Zablokowana klatka schodowa', 'Blocked stairwell')} value={(evBlocked ?? '') as '' | Stair}
                          onChange={(v) => setEvBlocked(v || null)} options={blockedOptions} tone="danger" />
             </div>
           </div>
         )}
+      </div>
 
-        <div className="relative h-[60vh] min-h-[320px] w-full overflow-hidden rounded-card border border-line">
+      <div className={`min-w-0 lg:order-none lg:col-start-1 lg:row-start-2 ${evac ? 'order-3' : 'order-2'}`}>
+        <div className="ship-stage relative h-[52vh] min-h-[300px] w-full overflow-hidden rounded-card border border-line lg:h-[62vh]">
           <p id={descId} className="sr-only">{canvasDesc}</p>
-          <div ref={hostRef} className="absolute inset-0" aria-hidden="true" />
+          <div ref={hostRef} className="ship-gl absolute inset-0" aria-hidden="true" />
           <CrewMarkers ref={markerRef} lang={lang} data={crew} show={showCrew && !glFail} sel={crewSel} hl={crewHl} onSelect={pickCrew} />
           {showCrew && !glFail && <CrewLegend lang={lang} data={crew} />}
           {glFail && (
-            <p className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-ink-2">
+            <p className="absolute inset-0 flex items-center justify-center p-6 text-center text-ink-2">
               {L(lang, 'Ta przeglądarka nie obsługuje widoku 3D (WebGL). Opis drogi obok jest pełny.', 'This browser cannot show 3D (WebGL). The route description is complete.')}
             </p>
           )}
           {loadingText && (
-            <p role="status" className="absolute inset-x-0 top-0 m-2 w-fit rounded-card bg-paper/90 px-3 py-1 text-xs font-semibold text-ink-2">
-              {loadingText}
-            </p>
+            <div role="status" className="absolute inset-x-0 top-1/2 mx-auto flex w-[min(20rem,80%)] -translate-y-1/2 flex-col gap-2 rounded-card bg-paper/90 px-4 py-3">
+              <span className="text-sm font-semibold text-ink-2">{loadingText}</span>
+              <span aria-hidden="true" className="block h-1.5 overflow-hidden rounded-full bg-paper-2">
+                <span className="block h-full bg-gold transition-[width] duration-300" style={{ width: `${progress && progress.pct >= 0 ? progress.pct : 35}%` }} />
+              </span>
+            </div>
           )}
           {error && (
-            <p role="alert" className="absolute inset-x-0 top-0 m-2 w-fit rounded-card bg-paper px-3 py-1 text-xs font-semibold text-danger">
-              {L(lang, 'Nie udało się wczytać modelu 3D.', 'Could not load the 3D model.')}
+            <p role="alert" className="absolute inset-x-0 top-0 m-3 flex w-fit items-center gap-2 rounded-card border border-danger bg-paper px-3 py-2 text-sm font-semibold text-danger">
+              <span aria-hidden="true" className="mark mark-tri" />
+              {L(lang, 'Nie udało się wczytać modelu 3D. Opis drogi obok jest pełny.', 'Could not load the 3D model. The written route is complete.')}
             </p>
           )}
           {mode === 'model' && shownInfo && (
             <div className="panel pointer-events-none absolute bottom-2 left-2 max-w-[80%] px-3 py-2 shadow-sm">
               <p className="tech-kicker">{shownInfo.deck}</p>
               <p className="tech-title text-lg">{shownInfo.name}</p>
-              {shownInfo.zone && <p className="text-xs text-ink-2">{L(lang, 'Strefa', 'Zone')}: {tr(lang, ZONE[shownInfo.zone].name)}</p>}
+              {shownInfo.zone && <p className="text-sm text-ink-2">{L(lang, 'Strefa', 'Zone')}: {tr(lang, ZONE[shownInfo.zone].name)}</p>}
             </div>
           )}
         </div>
-        <p className="mt-2 text-xs text-ink-2">
+        <p className="mt-2 text-sm text-ink-2">
           {mode === 'model'
             ? L(lang, 'Przeciągnij, aby obrócić; kółko lub dwa palce, aby przybliżyć. Kliknij pomieszczenie, aby zobaczyć nazwę.', 'Drag to rotate; scroll or pinch to zoom. Click a room to see its name.')
             : L(lang, 'Kadłub jest półprzezroczysty, aby widać było drogę w środku.', 'The hull is see-through so the route inside is visible.')}
         </p>
+        {evac && <div className="mt-3">{modelPicker}</div>}
         {showCrew && <CrewList lang={lang} data={crew} sel={crewSel} onSelect={pickCrew} onHl={setCrewHl} />}
       </div>
 
-      <aside className="panel flex min-w-0 flex-col gap-3 p-4">
+      <aside className={`panel flex min-w-0 flex-col gap-4 p-4 lg:order-none lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start ${evac ? 'order-2' : 'order-3'}`}>
         {mode === 'evac' ? (
           <>
             <p className="sr-only" role="status">
@@ -327,43 +341,55 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
                 `Route from ${ZONE[evZone].name.en} to ${MUSTER[r.muster].name.en}, ${Math.round(r.distance)} m.`)}
             </p>
             <div>
-              <p className="tech-kicker">{tr(lang, ZONE[evZone].deck)}</p>
-              <h3 className="tech-title text-xl">{tr(lang, ZONE[evZone].name)}</h3>
-              <p className="mt-1 text-sm font-semibold text-ok">
-                {L(lang, 'Cel', 'Destination')}: {tr(lang, MUSTER[r.muster].name)}
-              </p>
-              <p className="text-xs text-ink-2">{tr(lang, MUSTER[r.muster].where)}</p>
+              <p className="tech-kicker">{L(lang, 'Jesteś tutaj', 'You are here')} · {tr(lang, ZONE[evZone].deck)}</p>
+              <p className="font-semibold leading-snug">{tr(lang, ZONE[evZone].name)}</p>
             </div>
-            <EvacCrew lang={lang} data={crew} zone={evZone} routeZones={routeZones} />
+            <div className="rounded-card border-2 border-ok p-3">
+              <p className="tech-kicker flex items-center gap-2 !text-ok">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M7 21V4" /><path d="M7 4.5h9l-2 3 2 3H7" />
+                </svg>
+                {L(lang, 'Idź do', 'Go to')}
+              </p>
+              <h3 className="tech-title mt-1 text-[1.75rem] text-ok">{tr(lang, MUSTER[r.muster].name)}</h3>
+              <p className="text-sm text-ink-2">{tr(lang, MUSTER[r.muster].where)}</p>
+              <dl className="mt-3 grid grid-cols-2 gap-2">
+                <div className="rounded-card bg-paper-2 px-3 py-2">
+                  <dt className="tech-kicker">{L(lang, 'Dystans', 'Distance')}</dt>
+                  <dd className="tech-title text-xl tabular-nums sm:text-2xl">{Math.round(r.distance)} m</dd>
+                </div>
+                <div className="rounded-card bg-paper-2 px-3 py-2">
+                  <dt className="tech-kicker">{L(lang, 'Czas marszu', 'Walking time')}</dt>
+                  <dd className="tech-title text-xl tabular-nums sm:text-2xl">~{fmtTime(r.seconds)}</dd>
+                </div>
+              </dl>
+            </div>
             {r.detour && r.blocked && (
-              <p className="rounded-card border border-danger px-3 py-2 text-sm font-semibold text-danger">
+              <p role="status" className="flex items-start gap-2 rounded-card border-2 border-danger px-3 py-2 font-semibold text-danger">
+                <span aria-hidden="true" className="mark mark-tri mt-1" />
                 {L(lang, `Objazd: ${STAIRS[r.blocked].name.pl} zablokowane.`, `Detour: ${STAIRS[r.blocked].name.en} blocked.`)}
               </p>
             )}
             {evBlocked && !r.detour && (
-              <p className="text-xs text-ink-2">
+              <p className="text-sm text-ink-2">
                 {L(lang, 'Zablokowana klatka nie leży na tej drodze.', 'The blocked stairwell is not on this route.')}
               </p>
             )}
-            <dl className="grid grid-cols-2 gap-2">
-              <div className="rounded-card bg-paper-2 px-3 py-2">
-                <dt className="tech-kicker">{L(lang, 'Dystans', 'Distance')}</dt>
-                <dd className="tech-title text-2xl">{Math.round(r.distance)} m</dd>
-              </div>
-              <div className="rounded-card bg-paper-2 px-3 py-2">
-                <dt className="tech-kicker">{L(lang, 'Czas marszu', 'Walking time')}</dt>
-                <dd className="tech-title text-2xl">~{fmtTime(r.seconds)}</dd>
-              </div>
-            </dl>
-            <p className="text-xs text-ink-2">
-              {L(lang, 'Szacunek dla spokojnego marszu: 1,2 m/s po pokładzie, 0,6 m/s na schodach, bez tłoku.', 'Estimate at a calm pace: 1.2 m/s on deck, 0.6 m/s on stairs, no crowding.')}
-            </p>
             <div>
-              <h4 className="tech-kicker mb-1">{L(lang, 'Krok po kroku', 'Step by step')}</h4>
-              <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-sm text-ink">
-                {r.steps.map((s, i) => <li key={i}>{tr(lang, s)}</li>)}
+              <h4 className="tech-kicker mb-2">{L(lang, 'Krok po kroku', 'Step by step')}</h4>
+              <ol className="flex flex-col gap-2.5">
+                {r.steps.map((s, i) => (
+                  <li key={i} className="flex gap-3 leading-snug">
+                    <span aria-hidden="true" className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-ok font-display text-[0.95rem] font-bold text-on-strong">{i + 1}</span>
+                    <span className="min-w-0 pt-0.5"><span className="sr-only">{i + 1}. </span>{tr(lang, s)}</span>
+                  </li>
+                ))}
               </ol>
             </div>
+            <EvacCrew lang={lang} data={crew} zone={evZone} routeZones={routeZones} />
+            <p className="text-sm text-ink-2">
+              {L(lang, 'Szacunek dla spokojnego marszu: 1,2 m/s po pokładzie, 0,6 m/s na schodach, bez tłoku.', 'Estimate at a calm pace: 1.2 m/s on deck, 0.6 m/s on stairs, no crowding.')}
+            </p>
           </>
         ) : (
           <>
@@ -374,7 +400,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
             )}
             <div>
               <h3 className="tech-title text-xl">{L(lang, 'Strefy statku', 'Ship zones')}</h3>
-              <p className="text-xs text-ink-2">{L(lang, 'Wybierz strefę, aby ją podświetlić na modelu.', 'Pick a zone to highlight it on the model.')}</p>
+              <p className="text-sm text-ink-2">{L(lang, 'Wybierz strefę, aby ją podświetlić na modelu.', 'Pick a zone to highlight it on the model.')}</p>
             </div>
             <ul className="flex flex-col gap-1">
               {ZONES.map((z) => {
@@ -384,11 +410,11 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
                     <button type="button" aria-pressed={on} onClick={() => { setPicked(null); setModelZone(on ? null : z.id); }}
                             className={`tap flex-1 rounded-card border px-3 py-1.5 text-left text-sm ${on ? 'border-gold bg-paper-2 font-semibold text-ink' : 'border-line text-ink hover:bg-paper-2'}`}>
                       <span className="block">{tr(lang, z.name)}</span>
-                      <span className="block text-xs text-ink-2">{tr(lang, z.deck)}</span>
+                      <span className="block text-sm text-ink-2">{tr(lang, z.deck)}</span>
                     </button>
                     {on && onZone && (
                       <button type="button" onClick={() => onZone(z.id)}
-                              className="tap rounded-card border border-ok px-2 text-xs font-semibold text-ok hover:bg-paper-2">
+                              className="tap rounded-card bg-ok px-3 text-sm font-semibold leading-tight text-on-strong">
                         {L(lang, 'Droga ewakuacji', 'Evacuation route')}
                       </button>
                     )}
@@ -400,7 +426,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
             <p className="sr-only" aria-live="polite">{crewSelLabel}</p>
           </>
         )}
-        <p className="mt-auto border-t border-line pt-2 text-xs text-ink-2">{disclaimer}</p>
+        <p className="mt-auto border-t border-line pt-3 text-sm text-ink-2">{disclaimer}</p>
       </aside>
     </section>
   );

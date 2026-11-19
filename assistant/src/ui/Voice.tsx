@@ -29,7 +29,7 @@ export function MicButton({ voice, lang }: { voice: Voice; lang: Lang }) {
   return (
     <button ref={ref} type="button" onClick={voice.micPress} aria-keyshortcuts="Alt+Shift+M"
             aria-label={label} title={`${label} (Alt+Shift+M)`} data-on={on || undefined} data-invite={voice.invited || undefined}
-            className="vx-mic tap inline-flex size-11 shrink-0 items-center justify-center rounded-full border border-ink/35 text-ink">
+            className="vx-mic tap inline-flex size-12 shrink-0 items-center justify-center rounded-full border border-ink/35 text-ink">
       <Icon name={on ? 'stop' : 'mic'} size={on ? 16 : 20} />
     </button>
   );

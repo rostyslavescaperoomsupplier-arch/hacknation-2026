@@ -132,11 +132,9 @@
 .vx-set[open] .vx-chev { transform: rotate(180deg); }
 
 /* ---------------- dock offset ----------------
-   The fixed bottom bar exists only below 600 px (global.css .bnav); the composer sits above it there,
-   flush with the screen bottom from 600 px and floats 1 rem up as a card from 1024 px. */
-/* --bnav-h (Base.astro) = the bar's measured height incl. the gull's speaker "ear" and a wrapped two-row bar */
-.asst-dock { bottom: max(calc(max(72px, 4.5rem) + env(safe-area-inset-bottom)), var(--bnav-h, 0px)); }
-@media (min-width: 600px) { .asst-dock { bottom: 0; } }
+   Below 1024 px the app's tab bar is fixed to the bottom (styles.css --tabbar-h, 0 while typing), so the composer
+   sits directly on top of it; from 1024 px the tabs are in the header and the composer floats 1 rem up as a card. */
+.asst-dock { bottom: var(--tabbar-h, 0px); }
 @media (min-width: 1024px) { .asst-dock { bottom: 1rem; } }
 
 /* ---------------- buying in the chat (ui/Purchase.tsx) ----------------
@@ -166,8 +164,8 @@
 
 /* 2.4.11 Focus Not Obscured: the sticky composer covers the bottom of the screen, so anything that gets focus
    (purchase chips, steppers, form fields) is scrolled clear of it. */
-html:has(.asst-dock) { scroll-padding-bottom: calc(max(80px, 5rem) + 200px + env(safe-area-inset-bottom)); }
-@media (min-width: 600px) { html:has(.asst-dock) { scroll-padding-bottom: 210px; } }
+html:has(.asst-dock) { scroll-padding-bottom: calc(60px + 200px + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) { html:has(.asst-dock) { scroll-padding-bottom: 210px; } }
 /* ...but not while focus is in the dock itself: its controls are never behind it, and the padding would make focusing
    the composer (tap, or focus() after sending) scroll the page ~280 px and pull a short conversation off screen */
 html:has(.asst-dock[data-started] :focus) { scroll-padding-bottom: 0; }

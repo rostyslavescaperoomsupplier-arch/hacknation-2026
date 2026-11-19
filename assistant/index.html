@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#e6edf1" />
+  <meta name="color-scheme" content="light dark" />
+  <!-- night mode (bridge) before the first paint: no white flash when the app opens in the dark -->
+  <script>try { if (localStorage.getItem('ju-theme') === 'night') document.documentElement.dataset.theme = 'night'; } catch (e) {}</script>
   <title>Jantar Unity, asystent załogi</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

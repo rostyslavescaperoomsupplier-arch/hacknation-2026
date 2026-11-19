@@ -258,16 +258,25 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      <header className="flex items-end gap-4 pb-2">
+      <header className="flex items-end gap-3 pb-1 sm:gap-4 sm:pb-2">
         {mascot && (
           <span className="asst-head shrink-0">
             <MewkaReact state={mood} size="xl" pointTarget={mood === 'pointing' ? pointTarget() : null} />
           </span>
         )}
-        <div className="min-w-0 pb-2">
+        <div className="min-w-0 flex-1 pb-2">
           <p className="tech-kicker">{s.ai_badge}</p>
           <h1 className="tech-title mt-1 text-h2">{s.title}</h1>
         </div>
+        {msgs.length > 0 && (
+          <button type="button" onClick={clear}
+                  className="tap mb-1 inline-flex shrink-0 items-center gap-2 self-end rounded-card border border-line bg-paper px-3 text-sm font-semibold text-ink-2 hover:border-ink hover:text-ink">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden="true" focusable="false">
+              <path d="M5 12a7 7 0 1 0 2.1-5" /><path d="M4.5 3.5v4h4" />
+            </svg>
+            {s.clear}
+          </button>
+        )}
       </header>
 
       {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events -- delegated listener on real links */}
@@ -279,7 +288,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
         {msgs.map((m, i) =>
           m.role === 'user' ? (
             <div key={m.id} className="asst-user flex justify-end">
-              <p className="max-w-[85%] whitespace-pre-wrap rounded-card rounded-br-[2px] bg-navy px-4 py-2.5 leading-snug text-paper">
+              <p className="max-w-[85%] whitespace-pre-wrap rounded-card rounded-br-[2px] bg-navy px-4 py-3 leading-snug text-on-strong">
                 <span className="sr-only">{s.you}: </span>{m.text}
               </p>
             </div>
@@ -312,19 +321,16 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
       <div ref={end} className="-mt-4" />
 
       <div ref={dock} data-started={msgs.length > 0 || undefined}
-           className="asst-dock sticky z-10 -mx-4 border-t border-line bg-paper/95 px-4 pb-3 pt-3 backdrop-blur lg:mx-0 lg:rounded-card lg:border lg:px-5 lg:pb-4 lg:pt-4">
+           className="asst-dock sticky z-10 -mx-6 border-t border-line bg-paper px-6 pb-3 pt-3 lg:mx-0 lg:rounded-card lg:border lg:px-5 lg:pb-4 lg:pt-4">
         <div className={`mb-2 items-baseline justify-between gap-3 ${msgs.length ? 'hidden lg:flex' : 'flex'}`}>
           <h2 id="sugg-h" className="tech-kicker">{s.suggestions}</h2>
-          {msgs.length > 0 && (
-            <button type="button" onClick={clear} className="tap -my-3 px-1 text-sm text-ink-2 underline underline-offset-4 hover:text-ink">{s.clear}</button>
-          )}
         </div>
         <ul aria-labelledby="sugg-h" onFocus={(e) => (e.target as HTMLElement).scrollIntoView?.({ block: 'nearest', inline: 'nearest' })}
-            className={`asst-chips -mx-4 mb-3 snap-x snap-proximity scroll-px-4 gap-2 overflow-x-auto overscroll-x-contain px-4 pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-wrap lg:px-0 ${msgs.length ? 'hidden lg:flex' : 'flex'}`}>
+            className={`asst-chips -mx-6 mb-3 snap-x snap-proximity scroll-px-6 gap-2 overflow-x-auto overscroll-x-contain px-6 pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-wrap lg:px-0 ${msgs.length ? 'hidden lg:flex' : 'flex'}`}>
           {s.sugg.map((q) => (
             <li key={q} className="shrink-0 snap-start">
               <button type="button" onClick={() => send(q)} disabled={busy}
-                      className="asst-chip tap inline-flex items-center gap-2 rounded-card border border-line bg-paper px-4 text-left text-sm hover:border-ink hover:bg-paper-2 disabled:opacity-50">
+                      className="asst-chip tap inline-flex items-center gap-2 rounded-card border border-line bg-paper px-4 py-2 text-left text-[0.9375rem] hover:border-ink hover:bg-paper-2 disabled:opacity-50">
                 {q}
                 <Icon name="arrow-right" size={14} className="asst-chip-ic text-gold-ink" />
               </button>
@@ -332,7 +338,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
           ))}
         </ul>
         <VoiceBar voice={voice} lang={lang} />
-        <form onSubmit={onSubmit} className="asst-composer flex items-center gap-2 rounded-full border border-ink/35 bg-paper py-1 pl-5 pr-1">
+        <form onSubmit={onSubmit} className="asst-composer flex items-center gap-2 rounded-full border border-ink/35 bg-paper py-1 pl-5 pr-1.5">
           <div className="min-w-0 flex-1">
             <label htmlFor="assistant-q" className="sr-only">{s.input_label}</label>
             <input id="assistant-q" ref={input} type="text" name="q" value={value} onChange={(e) => onInputChange(e.target.value)}
@@ -351,7 +357,7 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
               </button>
             ) : (
             <button type="submit" disabled={!value.trim()}
-                    className="asst-send tap inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gold-ink px-4 font-semibold text-paper disabled:bg-paper-2 disabled:text-ink-2">
+                    className="asst-send tap inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gold-ink px-4 font-semibold text-on-strong disabled:bg-paper-2 disabled:text-ink-2">
               <span className="sr-only sm:not-sr-only">{s.send}</span>
               <Icon name="arrow-right" size={18} />
             </button>
@@ -361,6 +367,16 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
         <p id="assistant-rodo-short" className="asst-rodo mt-2 text-[0.8rem] text-ink-2">{s.rodo}</p>
       </div>
     </div>
+  );
+}
+
+/** route action glyph: a walking arrow toward a flag (muster station) */
+function RouteGlyph() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round"
+         strokeLinejoin="round" aria-hidden="true" focusable="false" className="shrink-0">
+      <path d="M3 18h9.5" /><path d="M9.5 15l3 3-3 3" /><path d="M17 20V4" /><path d="M17 4.5h4.5l-1.5 2.5 1.5 2.5H17" />
+    </svg>
   );
 }
 
@@ -393,13 +409,16 @@ function BotAnswer({ a, lang, note, mascot, mood, id, voice, onListen, onAction,
             {a.actions.map((act) => (
               <li key={act.type + (act.type === 'route' ? act.zone + (act.blocked ?? '') : act.id)}>
                 <button type="button" data-action={act.type} onClick={() => onAction(act)}
-                        className={`asst-act tap inline-flex w-full items-center justify-between gap-3 rounded-card border-2 px-4 py-2 text-left text-sm font-semibold sm:w-auto ${
-                          act.type === 'route' ? 'border-ok text-ink hover:bg-paper-2' : 'border-gold text-ink hover:bg-paper-2'}`}>
-                  <span>
-                    <span className={act.type === 'route' ? 'text-ok' : 'text-gold-ink'}>{act.type === 'route' ? s.act_route : s.act_drill}</span>{' '}
-                    {act.label}
+                        className={`asst-act tap-lg inline-flex w-full items-center justify-between gap-3 rounded-card px-4 py-2.5 text-left font-semibold sm:w-auto ${
+                          act.type === 'route' ? 'bg-ok text-on-strong hover:brightness-110' : 'border-2 border-gold bg-paper text-ink hover:bg-paper-2'}`}>
+                  <span className="flex min-w-0 items-center gap-3">
+                    {act.type === 'route' ? <RouteGlyph /> : <span aria-hidden="true" className="mark mark-sq" />}
+                    <span className="min-w-0">
+                      <span className={`block text-xs font-semibold uppercase tracking-[0.08em] ${act.type === 'route' ? '' : 'text-gold-ink'}`}>{act.type === 'route' ? s.act_route : s.act_drill}</span>
+                      <span className="block">{act.label}</span>
+                    </span>
                   </span>
-                  <Icon name="arrow-right" size={16} className="shrink-0" />
+                  <Icon name="arrow-right" size={20} className="shrink-0" />
                 </button>
               </li>
             ))}
@@ -409,9 +428,12 @@ function BotAnswer({ a, lang, note, mascot, mood, id, voice, onListen, onAction,
       <ListenButton voice={voice} lang={lang} id={Number(id?.slice(4))} onClick={onListen} />
       {a.fallback && (
         <div className="flex flex-wrap gap-2">
-          <a href={`tel:${CONTACT.tel}`} className="tap inline-flex items-center gap-2 rounded-full bg-ink px-4 font-semibold text-paper">
-            <Icon name="phone" size={18} />
-            {s.call} <span className="font-normal">{contactLabel(lang)}</span>
+          <a href={`tel:${CONTACT.tel}`} className="tap-lg inline-flex max-w-full items-center gap-3 rounded-card bg-navy px-4 py-2 text-on-strong no-underline">
+            <Icon name="phone" size={20} className="shrink-0" />
+            <span className="min-w-0 leading-tight">
+              <span className="block font-semibold">{s.call}</span>
+              <span className="block text-sm">{contactLabel(lang)}</span>
+            </span>
           </a>
         </div>
       )}
