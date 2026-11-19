@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><title>Jantar Unity flyer</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+@page { size: A4; margin: 0; }
+:root { --page:#e6edf1; --paper:#fff; --ink:#12303f; --ink2:#4b6472; --line:#c6d4dc; --or:#e8590c; --orink:#b4450a; --ok:#1d7a4c; --red:#c62828; --navy:#0d2633; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 210mm; height: 297mm; }
+body { background: var(--page); color: var(--ink); font-family: 'Barlow', sans-serif; font-size: 10.5pt; line-height: 1.38;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact; position: relative; overflow: hidden;
+  background-image: linear-gradient(var(--line) 0.5px, transparent 0.5px), linear-gradient(90deg, var(--line) 0.5px, transparent 0.5px);
+  background-size: 8mm 8mm; background-position: -0.25mm -0.25mm; }
+.sheet { position: absolute; inset: 9mm; display: flex; flex-direction: column; gap: 4mm; }
+.cond { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; line-height: 1; }
+.kick { font-weight: 600; font-size: 8pt; letter-spacing: .14em; text-transform: uppercase; color: var(--ink2); }
+.top { display: flex; justify-content: space-between; align-items: center; border-bottom: 1.4pt solid var(--ink); padding-bottom: 2.2mm; }
+.tag { border: 1pt solid var(--orink); color: var(--orink); padding: .6mm 2mm; border-radius: 1mm; }
+.hero { position: relative; height: 61mm; flex: none; }
+.hero h1 { font-size: 60pt; color: var(--ink); margin-top: 2mm; }
+.hero h1 span { color: var(--or); }
+.hero .sub { font-family: 'Barlow Condensed'; font-weight: 600; font-size: 21pt; text-transform: uppercase; letter-spacing: .03em; color: var(--ink); margin-top: 1.5mm; }
+.hero .lead { width: 112mm; margin-top: 3.5mm; font-size: 11pt; color: var(--ink); }
+.gull { position: absolute; right: -2mm; top: 1mm; width: 66mm; filter: drop-shadow(0 1.2mm 1.6mm rgba(18,48,63,.22)); }
+.mewka-say { position: absolute; right: 0; top: 31mm; width: 66mm; background: var(--paper); border: 1pt solid var(--line); border-radius: 3mm; padding: 2.4mm 3mm; font-size: 9pt; box-shadow: 0 1mm 3mm rgba(18,48,63,.08); }
+.mewka-say b { color: var(--orink); }
+.mewka-say:before { content: ''; position: absolute; top: -1.6mm; left: 44mm; width: 3mm; height: 3mm; background: var(--paper); border-left: 1pt solid var(--line); border-top: 1pt solid var(--line); transform: rotate(45deg); }
+.map { flex: none; height: 71mm; position: relative; background: var(--paper); border: 1pt solid var(--ink); border-radius: 2mm; overflow: hidden; display: grid; grid-template-columns: 1fr 56mm; }
+.map img { width: 100%; height: 71mm; object-fit: cover; object-position: 50% 78%; display: block; border-right: 1pt dashed var(--line); }
+.map .side { padding: 3.4mm 3.6mm; display: flex; flex-direction: column; gap: 2.2mm; }
+.map h2 { font-size: 16pt; }
+.map p { font-size: 8.8pt; color: var(--ink2); }
+.legend { margin-top: auto; display: flex; flex-direction: column; gap: 1mm; font-size: 8.8pt; font-weight: 600; }
+.legend i { display: inline-block; width: 3.2mm; height: 3.2mm; border-radius: 50%; border: .6mm solid #fff; vertical-align: -.5mm; margin-right: 1.8mm; box-shadow: 0 0 0 .2mm var(--ink2); }
+.badge { position: absolute; left: 3mm; top: 3mm; background: var(--red); color: #fff; padding: .8mm 2.2mm; border-radius: 1mm; font-size: 8pt; letter-spacing: .1em; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; }
+.f { background: var(--paper); border: 1pt solid var(--line); border-radius: 2mm; padding: 2.6mm 3.2mm; display: flex; flex-direction: column; gap: 1.2mm; }
+.fh { display: flex; align-items: center; gap: 2.2mm; }
+.f svg { flex: none; width: 7mm; height: 7mm; stroke: var(--ink); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.f h3 { font-size: 13.5pt; }
+.f p { font-size: 8.7pt; color: var(--ink2); line-height: 1.33; }
+.nums { background: var(--navy); color: #fff; border-radius: 2mm; display: grid; grid-template-columns: repeat(4, 1fr); padding: 2.6mm 2mm; }
+.nums div { padding: 0 3mm; border-left: .6pt solid rgba(255,255,255,.25); }
+.nums div:first-child { border-left: 0; }
+.nums b { display: block; font-family: 'Barlow Condensed'; font-weight: 700; font-size: 22pt; color: #ff8a4c; line-height: 1; }
+.nums span { font-size: 8.3pt; color: #c9d7df; }
+.foot { margin-top: auto; display: flex; gap: 5mm; align-items: center; border-top: 1.4pt solid var(--ink); padding-top: 2.4mm; }
+.qr { width: 22mm; height: 22mm; background: #fff; padding: 1.6mm; border-radius: 1.5mm; border: 1pt solid var(--ink); flex: none; }
+.qr svg { width: 100%; height: 100%; display: block; }
+.foot .url { font-size: 22pt; color: var(--ink); }
+.foot .url span { color: var(--or); }
+.foot p { font-size: 8.6pt; color: var(--ink2); }
+.foot .note { font-size: 7.4pt; color: var(--ink2); margin-top: 1.2mm; }
+</style></head><body><div class="sheet">
+  <div class="top"><span class="kick">HackNation 2026 &middot; cyfrowy asystent załogi</span><span class="kick tag">Działający prototyp</span></div>
+
+  <section class="hero">
+    <img class="gull" src="gull-t.png" alt="">
+    <h1 class="cond">Jantar <span>Unity</span></h1>
+    <p class="sub">Asystent dla załogi i kapitana promu</p>
+    <p class="lead">Kiedy na statku wyje alarm, liczy się każda minuta. Kto jest w maszynowni? Czy wszyscy doszli na zbiórkę? Którędy iść, gdy klatka schodowa jest odcięta? Jantar Unity odpowiada na każdym terminalu na pokładzie, głosem i na żywej mapie 3D.</p>
+    <div class="mewka-say"><b>Mewka:</b> Na zbiórce 28 z 42 osób. John Paul Cruz stoi bez ruchu w maszynowni od 2 minut.</div>
+  </section>
+
+  <section class="map">
+    <span class="badge cond">Ćwiczenie: pożar</span>
+    <img src="evac-map.png" alt="Mapa 3D promu w czasie ewakuacji z kropkami osób">
+    <div class="side">
+      <h2 class="cond">Kto gdzie jest. Na żywo.</h2>
+      <p>Opaska z ESP32 mierzy sygnał kotwic BLE na pokładach, a centrala liczy z tego pozycję i status. Mostek od razu widzi, kogo szukać i jak do niego dojść.</p>
+      <div class="legend">
+        <span><i style="background:var(--ok)"></i>na zbiórce</span>
+        <span><i style="background:var(--or)"></i>w drodze</span>
+        <span><i style="background:var(--red)"></i>SOS albo bez ruchu</span>
+        <span><i style="background:#fff;border:.5mm dashed var(--ink2);box-shadow:none"></i>brak sygnału: ostatnia pozycja</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="f"><div class="fh"><svg viewBox="0 0 24 24"><path d="M9 5.5 10.5 3.5h3L15 5.5v6l-1.5 2h-3L9 11.5Z"/><path d="M6 10v2.5L8.5 16h7l2.5-3.5V10"/><path d="M12 16v4.5"/><path d="M8.5 20.5h7"/></svg><h3 class="cond">Mewka, asystent głosowy</h3></div><p>Pytasz głosem albo piszesz: procedury, sygnały alarmowe, gdzie jest bosman, kogo brakuje. Odpowiada krótko, z bazy procedur statku.</p></div>
+    <div class="f"><div class="fh"><svg viewBox="0 0 24 24"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2H5Z"/><path d="M10 21h4"/><path d="M3.2 9.5A9.5 9.5 0 0 1 5.4 5"/><path d="M20.8 9.5A9.5 9.5 0 0 0 18.6 5"/></svg><h3 class="cond">System alarmowy</h3></div><p>Mostek ogłasza alarm, wszystkie terminale pokazują go w tej samej sekundzie. Załoga potwierdza, a rozliczenie zbiórki liczy się samo.</p></div>
+    <div class="f"><div class="fh"><svg viewBox="0 0 24 24"><path d="M7.5 3.5h9l.8 4H6.7Z"/><path d="M6.7 16.5h10.6l-.8 4h-9Z"/><rect x="5.5" y="7.5" width="13" height="9" rx="2"/><path d="M10 12h4"/><path d="M20.5 9.5a4 4 0 0 1 0 5"/></svg><h3 class="cond">Opaska ESP32</h3></div><p>Pozycja z dokładnością kilku metrów, wibracja innym wzorem dla każdego alarmu, potwierdzenie i SOS jednym przyciskiem.</p></div>
+    <div class="f"><div class="fh"><svg viewBox="0 0 24 24"><path d="M3 18h9.5"/><path d="M9.5 15l3 3-3 3"/><path d="M17 20V4"/><path d="M17 4.5h4.5l-1.5 2.5 1.5 2.5H17"/></svg><h3 class="cond">Drogi ewakuacji 3D</h3></div><p>Model promu z drogą z każdej strefy do punktu zbiórki, czasem marszu i objazdem, gdy klatka schodowa jest zablokowana.</p></div>
+    <div class="f"><div class="fh"><svg viewBox="0 0 24 24"><path d="M3.5 4.5h17v11h-17Z"/><path d="M9 19.5h6"/><path d="M12 15.5v4"/><path d="M7 8.5l2.5 2-2.5 2"/><path d="M11.5 12.5h4"/></svg><h3 class="cond">Terminale i karty RFID</h3></div><p>Logowanie kartą lub opaską, role od kapitana do marynarza, łączność wideo i audio między terminalami.</p></div>
+    <div class="f"><div class="fh"><svg viewBox="0 0 24 24"><path d="M3 9.5c2 0 2-1.5 4.5-1.5S9.5 9.5 12 9.5 14 8 16.5 8 19 9.5 21 9.5"/><path d="M3 14.5c2 0 2-1.5 4.5-1.5s2 1.5 4.5 1.5 2-1.5 4.5-1.5 2.5 1.5 4.5 1.5"/><circle cx="12" cy="4" r="1.2"/><circle cx="12" cy="20" r="1.2"/></svg><h3 class="cond">Ćwiczenia i choroba morska</h3></div><p>7 scenariuszy ćwiczeń z dziennikiem i omówieniem. Kropki ruchu statku na ekranie zmniejszają mdłości przy czytaniu.</p></div>
+  </section>
+
+  <section class="nums">
+    <div><b>~3 m</b><span>mediana błędu pozycji z opaski (symulacja)</span></div>
+    <div><b>9</b><span>typów alarmów, od pożaru po człowieka za burtą</span></div>
+    <div><b>5</b><span>statusów osoby w czasie ewakuacji</span></div>
+    <div><b>1 s</b><span>i każdy terminal na statku wie o alarmie</span></div>
+  </section>
+
+  <footer class="foot">
+    <div class="qr"><svg viewBox="0 0 25 25"><path fill="#12303f" d="M0,0H1V1H0zM1,0H2V1H1zM2,0H3V1H2zM3,0H4V1H3zM4,0H5V1H4zM5,0H6V1H5zM6,0H7V1H6zM11,0H12V1H11zM12,0H13V1H12zM14,0H15V1H14zM16,0H17V1H16zM18,0H19V1H18zM19,0H20V1H19zM20,0H21V1H20zM21,0H22V1H21zM22,0H23V1H22zM23,0H24V1H23zM24,0H25V1H24zM0,1H1V2H0zM6,1H7V2H6zM9,1H10V2H9zM11,1H12V2H11zM12,1H13V2H12zM13,1H14V2H13zM15,1H16V2H15zM16,1H17V2H16zM18,1H19V2H18zM24,1H25V2H24zM0,2H1V3H0zM2,2H3V3H2zM3,2H4V3H3zM4,2H5V3H4zM6,2H7V3H6zM8,2H9V3H8zM10,2H11V3H10zM12,2H13V3H12zM14,2H15V3H14zM15,2H16V3H15zM18,2H19V3H18zM20,2H21V3H20zM21,2H22V3H21zM22,2H23V3H22zM24,2H25V3H24zM0,3H1V4H0zM2,3H3V4H2zM3,3H4V4H3zM4,3H5V4H4zM6,3H7V4H6zM8,3H9V4H8zM9,3H10V4H9zM10,3H11V4H10zM11,3H12V4H11zM12,3H13V4H12zM13,3H14V4H13zM14,3H15V4H14zM16,3H17V4H16zM18,3H19V4H18zM20,3H21V4H20zM21,3H22V4H21zM22,3H23V4H22zM24,3H25V4H24zM0,4H1V5H0zM2,4H3V5H2zM3,4H4V5H3zM4,4H5V5H4zM6,4H7V5H6zM8,4H9V5H8zM10,4H11V5H10zM12,4H13V5H12zM14,4H15V5H14zM16,4H17V5H16zM18,4H19V5H18zM20,4H21V5H20zM21,4H22V5H21zM22,4H23V5H22zM24,4H25V5H24zM0,5H1V6H0zM6,5H7V6H6zM8,5H9V6H8zM10,5H11V6H10zM12,5H13V6H12zM14,5H15V6H14zM15,5H16V6H15zM18,5H19V6H18zM24,5H25V6H24zM0,6H1V7H0zM1,6H2V7H1zM2,6H3V7H2zM3,6H4V7H3zM4,6H5V7H4zM5,6H6V7H5zM6,6H7V7H6zM8,6H9V7H8zM10,6H11V7H10zM12,6H13V7H12zM14,6H15V7H14zM16,6H17V7H16zM18,6H19V7H18zM19,6H20V7H19zM20,6H21V7H20zM21,6H22V7H21zM22,6H23V7H22zM23,6H24V7H23zM24,6H25V7H24zM8,7H9V8H8zM11,7H12V8H11zM0,8H1V9H0zM2,8H3V9H2zM3,8H4V9H3zM4,8H5V9H4zM5,8H6V9H5zM6,8H7V9H6zM9,8H10V9H9zM11,8H12V9H11zM13,8H14V9H13zM15,8H16V9H15zM18,8H19V9H18zM19,8H20V9H19zM20,8H21V9H20zM21,8H22V9H21zM22,8H23V9H22zM0,9H1V10H0zM3,9H4V10H3zM7,9H8V10H7zM13,9H14V10H13zM16,9H17V10H16zM19,9H20V10H19zM23,9H24V10H23zM0,10H1V11H0zM1,10H2V11H1zM2,10H3V11H2zM4,10H5V11H4zM6,10H7V11H6zM8,10H9V11H8zM12,10H13V11H12zM13,10H14V11H13zM14,10H15V11H14zM15,10H16V11H15zM18,10H19V11H18zM20,10H21V11H20zM21,10H22V11H21zM23,10H24V11H23zM24,10H25V11H24zM0,11H1V12H0zM1,11H2V12H1zM5,11H6V12H5zM7,11H8V12H7zM11,11H12V12H11zM16,11H17V12H16zM17,11H18V12H17zM18,11H19V12H18zM20,11H21V12H20zM24,11H25V12H24zM1,12H2V13H1zM2,12H3V13H2zM4,12H5V13H4zM5,12H6V13H5zM6,12H7V13H6zM7,12H8V13H7zM10,12H11V13H10zM11,12H12V13H11zM13,12H14V13H13zM14,12H15V13H14zM17,12H18V13H17zM18,12H19V13H18zM20,12H21V13H20zM22,12H23V13H22zM23,12H24V13H23zM24,12H25V13H24zM0,13H1V14H0zM1,13H2V14H1zM4,13H5V14H4zM9,13H10V14H9zM10,13H11V14H10zM12,13H13V14H12zM14,13H15V14H14zM19,13H20V14H19zM21,13H22V14H21zM23,13H24V14H23zM0,14H1V15H0zM3,14H4V15H3zM4,14H5V15H4zM6,14H7V15H6zM7,14H8V15H7zM8,14H9V15H8zM10,14H11V15H10zM13,14H14V15H13zM15,14H16V15H15zM17,14H18V15H17zM19,14H20V15H19zM20,14H21V15H20zM21,14H22V15H21zM23,14H24V15H23zM24,14H25V15H24zM0,15H1V16H0zM4,15H5V16H4zM9,15H10V16H9zM12,15H13V16H12zM19,15H20V16H19zM20,15H21V16H20zM24,15H25V16H24zM0,16H1V17H0zM3,16H4V17H3zM4,16H5V17H4zM6,16H7V17H6zM7,16H8V17H7zM12,16H13V17H12zM13,16H14V17H13zM14,16H15V17H14zM15,16H16V17H15zM16,16H17V17H16zM17,16H18V17H17zM18,16H19V17H18zM19,16H20V17H19zM20,16H21V17H20zM22,16H23V17H22zM8,17H9V18H8zM10,17H11V18H10zM16,17H17V18H16zM20,17H21V18H20zM21,17H22V18H21zM0,18H1V19H0zM1,18H2V19H1zM2,18H3V19H2zM3,18H4V19H3zM4,18H5V19H4zM5,18H6V19H5zM6,18H7V19H6zM11,18H12V19H11zM12,18H13V19H12zM14,18H15V19H14zM16,18H17V19H16zM18,18H19V19H18zM20,18H21V19H20zM22,18H23V19H22zM23,18H24V19H23zM24,18H25V19H24zM0,19H1V20H0zM6,19H7V20H6zM8,19H9V20H8zM9,19H10V20H9zM10,19H11V20H10zM11,19H12V20H11zM14,19H15V20H14zM16,19H17V20H16zM20,19H21V20H20zM21,19H22V20H21zM0,20H1V21H0zM2,20H3V21H2zM3,20H4V21H3zM4,20H5V21H4zM6,20H7V21H6zM8,20H9V21H8zM9,20H10V21H9zM10,20H11V21H10zM11,20H12V21H11zM15,20H16V21H15zM16,20H17V21H16zM17,20H18V21H17zM18,20H19V21H18zM19,20H20V21H19zM20,20H21V21H20zM22,20H23V21H22zM23,20H24V21H23zM24,20H25V21H24zM0,21H1V22H0zM2,21H3V22H2zM3,21H4V22H3zM4,21H5V22H4zM6,21H7V22H6zM8,21H9V22H8zM9,21H10V22H9zM12,21H13V22H12zM13,21H14V22H13zM17,21H18V22H17zM18,21H19V22H18zM20,21H21V22H20zM21,21H22V22H21zM22,21H23V22H22zM23,21H24V22H23zM24,21H25V22H24zM0,22H1V23H0zM2,22H3V23H2zM3,22H4V23H3zM4,22H5V23H4zM6,22H7V23H6zM8,22H9V23H8zM9,22H10V23H9zM10,22H11V23H10zM13,22H14V23H13zM14,22H15V23H14zM15,22H16V23H15zM17,22H18V23H17zM21,22H22V23H21zM22,22H23V23H22zM24,22H25V23H24zM0,23H1V24H0zM6,23H7V24H6zM10,23H11V24H10zM12,23H13V24H12zM13,23H14V24H13zM15,23H16V24H15zM16,23H17V24H16zM17,23H18V24H17zM18,23H19V24H18zM19,23H20V24H19zM20,23H21V24H20zM21,23H22V24H21zM24,23H25V24H24zM0,24H1V25H0zM1,24H2V25H1zM2,24H3V25H2zM3,24H4V25H3zM4,24H5V25H4zM5,24H6V25H5zM6,24H7V25H6zM8,24H9V25H8zM12,24H13V25H12zM14,24H15V25H14zM18,24H19V25H18zM19,24H20V25H19zM20,24H21V25H20zM21,24H22V25H21zM22,24H23V25H22zM23,24H24V25H23zM24,24H25V25H24z"/></svg></div>
+    <div>
+      <div class="url cond">jantar.byst.re <span>&rarr;</span></div>
+      <p>Zeskanuj i sprawdź sam: porozmawiaj z Mewką, otwórz model 3D promu, zobacz drogę ewakuacji z dowolnej strefy.</p>
+      <p class="note">Prototyp hackathonowy. Nie zastępuje Muster List, instalacji alarmowej statku ani poleceń kapitana.</p>
+    </div>
+  </footer>
+</div></body></html>
