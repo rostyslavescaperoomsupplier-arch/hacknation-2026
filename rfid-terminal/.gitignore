@@ -1,0 +1,4 @@
+config.json
+zdjecia/
+__pycache__/
+*.csv

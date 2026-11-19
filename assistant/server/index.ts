@@ -5,6 +5,7 @@
 //                          /api/chat, authoritative) or `error` { error: "assistant unavailable" | "rate limited" | "bad request" }
 //   GET  /api/crew/{summary|rooms|rooms/:id|crew?q=|terminals|activity|alerts}
 //                          read-only proxy to the crew database (CREW_API), rooms/terminals + `place`; 503 when it is down (crew.ts)
+//   POST /api/checkin      { rfid, terminal, direction? } from a physical RFID terminal, header x-terminal-key (terminals.ts)
 // Errors: 400 bad input, 403 bad origin / missing x-assistant-token, 429 rate limited (retry-after), 502 upstream failure,
 //         503 { error: "assistant not configured" } without Anthropic credentials and no local engine (stream: SSE `error`).
 // Listens on HOST (default 127.0.0.1: nginx is the only way in) and PORT. requestTimeout 15 s / headersTimeout 10 s
@@ -29,6 +30,7 @@ import { attachCrewVideoWebSocket } from './crew-video.ts';
 import { attachAlarms, handleAlarmHttp } from './alarms.ts';
 import { handleStatsHttp } from './stats.ts';
 import { handleBandsHttp } from './positions.ts';
+import { handleTerminalsHttp } from './terminals.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -193,6 +195,7 @@ const server = createServer({ connectionsCheckingInterval: 2_000 }, async (req, 
     if (await handleAlarmHttp(req, res)) return;
     if (await handleStatsHttp(req, res)) return;
     if (await handleBandsHttp(req, res)) return;
+    if (await handleTerminalsHttp(req, res)) return;
     if (url.startsWith('/api/')) return send(res, 404, { error: 'not found' });
     serveStatic(req, res);
   } catch (e) {
