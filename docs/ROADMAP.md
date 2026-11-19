@@ -83,6 +83,29 @@ Warunki:
 - **Łączność**: bramki BLE w strefach (te same co terminale), działanie bez internetu na statku.
 - **Prototyp na hackathon**: opaska z tagiem RFID (odbicia już działają w bazie) + ESP32 z silnikiem wibracyjnym i BLE, sterowany przez ten sam system alarmowy.
 
+## 3b. Głos Mewki: plan ulepszeń
+
+Stan 2026-11-19: półdupleks. Gdy Mewka mówi, mikrofon jest wyłączony (przeglądarka nie usuwa echa `speechSynthesis`, więc słyszała samą siebie); mikrofon wraca 1,4 s po końcu wypowiedzi, a końcówka jej własnej odpowiedzi złapana zaraz potem jest odrzucana. Przerwać można przyciskiem mikrofonu, Escape, pisaniem albo dotknięciem.
+
+### Teraz (hackathon, małe i pewne)
+1. **Krótka odpowiedź głosem, pełna na ekranie.** W trybie głosowym Mewka czyta 1–2 zdania (sedno + pierwszy krok), resztę pokazuje. Krócej mówi = krócej zamknięty mikrofon.
+2. **Wyraźny stan „mówię / słucham”** na Mewce i przycisku (kolor + ikona mikrofonu przekreślona podczas mowy), żeby nikt nie mówił do wyłączonego mikrofonu.
+3. **Przycisk „Przerwij” w zasięgu kciuka** podczas mowy (duży, obsługa w rękawicach), skrót: spacja.
+4. **Panel diagnostyczny głosu** (`?debug=voice`): co usłyszał rozpoznawacz, co odrzucono jako echo, czasy. Do strojenia na prawdziwym mostku.
+
+### Po hackathonie
+5. **Naciśnij i mów (push-to-talk)** jako tryb domyślny na głośnym mostku i w maszynowni: przytrzymanie przycisku ekranowego albo fizycznego przycisku przy terminalu. Zero fałszywych startów od hałasu.
+6. **Komendy głosowe aplikacji** z lokalnym rozpoznaniem intencji („pokaż drogę ewakuacji z maszynowni”, „ogłoś alarm ćwiczebny”). Przy alarmach **potwierdzenie z powtórzeniem**, jak w łączności morskiej (SMCP): Mewka powtarza komendę, wykonuje dopiero po „potwierdzam”.
+7. **Alarm ma pierwszeństwo:** ogłoszony alarm natychmiast ucisza Mewkę i zamyka mikrofon; po alarmie Mewka sama nie wraca do rozmowy.
+8. **Mieszane PL/EN:** rozpoznawanie fraz SMCP i nazw sprzętu po angielsku w polskiej rozmowie (słownik podpowiedzi + normalizacja przed wysłaniem).
+
+### Pilot (warunek na prawdziwym statku)
+9. **Rozpoznawanie mowy offline.** Web Speech API w Chrome wysyła dźwięk do Google, czyli na morzu bez łącza głos nie działa. Docelowo: Whisper (np. whisper.cpp / faster-whisper) na serwerze centrali albo Vosk w przeglądarce (jest model polski). Dźwięk nie opuszcza statku (RODO).
+10. **Własny syntezator mowy** (Piper, polskie głosy) na centrali: ten sam głos Mewki na każdym terminalu, niezależnie od systemu tabletu.
+11. **Prawdziwe przerywanie głosem (pełny dupleks).** Możliwe dopiero przy 9 + 10: odpowiedź grana jako `<audio>` ze strony, mikrofon przez `getUserMedia` z `echoCancellation`, własny STT na tym strumieniu. Do sprawdzenia na sprzęcie terminala, czy AEC przeglądarki faktycznie wycina dźwięk strony.
+12. **Słowo budzące „Mewka”** (lokalne wykrywanie, np. openWakeWord) zamiast ciągłego nasłuchu: mikrofon otwiera się dopiero na zawołanie.
+13. **Głos tylko dla zalogowanych** (RFID): bez logowania Mewka nie odpowiada głosem na pytania o załogę i lokalizacje.
+
 ## 4. Platforma (warunek wdrożenia na prawdziwy statek)
 
 - **Prawdziwe uwierzytelnianie terminali i osób**: karta RFID + PIN, role (mostek, oficer, załoga), log audytu. Dziś rola terminala jest deklaratywna, a lokalizacja załogi jest widoczna bez logowania (patrz `docs/ADVERSARIAL-REPORT.md`).
@@ -95,6 +118,6 @@ Warunki:
 
 | Etap | Zakres |
 |---|---|
-| Teraz (hackathon) | klucz API, dane Jantar Unity, scenariusz demo, czytnik RFID, kiosk |
-| Po hackathonie (1–2 mies.) | uwierzytelnianie, rozliczenie zbiórki z RFID, godziny odpoczynku, raport PSC, komendy głosowe, CI |
-| Pilot (3–6 mies.) | serwer na statku + offline, integracje (centrala pożarowa, AIS), RODO/DPIA, cyberbezpieczeństwo, pilot z armatorem |
+| Teraz (hackathon) | klucz API, dane Jantar Unity, scenariusz demo, czytnik RFID, kiosk, głos 1–4 |
+| Po hackathonie (1–2 mies.) | uwierzytelnianie, rozliczenie zbiórki z RFID, godziny odpoczynku, raport PSC, głos 5–8 (push-to-talk, komendy z potwierdzeniem), CI |
+| Pilot (3–6 mies.) | serwer na statku + offline, integracje (centrala pożarowa, AIS), RODO/DPIA, cyberbezpieczeństwo, pilot z armatorem, głos 9–13 (STT/TTS offline, pełny dupleks, słowo budzące) |
