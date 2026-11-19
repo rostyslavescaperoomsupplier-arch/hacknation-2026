@@ -14,7 +14,7 @@
 // Every state is also text (visible status + one aria-live region); the gull only mirrors it.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Answer, Lang } from '../types';
-import { tokens } from '../lib/text';
+import { lev, tokens } from '../lib/text';
 import type { MewkaState } from '../../../mewka/src';
 import { Speaker, earcon, isIOS, listen, pickVoice, sentences, sttSupported, ttsSupported, voicesReady, type Listening, type Seg, type SttError } from './engine';
 import { LOCALE, VSTR } from './i18n';
@@ -27,6 +27,10 @@ type Beat = [MewkaState, number?];
 /** grace period between the final transcript and sending (visible, cancellable) */
 export const GRACE_MS = 1600;
 export const RATES = [0.75, 1, 1.25, 1.5];
+/** after the voice ends, the mic opens this late (room reverb / the speaker's buffer tail) */
+const AFTER_SPEECH_MS = 1100;
+/** right after the voice: a final that is mostly our own words is an echo, not a question */
+const ECHO_TAIL_MS = 3000;
 /** spoken commands that stop instead of being sent as a question */
 const STOP_WORDS = new Set(['stop', 'stopp', 'dosc', 'koniec', 'zatrzymaj', 'przestan', 'cisza', 'halt', 'genug', 'enough', 'quiet', 'dosyt', 'zupynys', 'zupynysia', 'tycho']);
 
@@ -76,6 +80,7 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
   const talkT = useRef(0);
   const spoken = useRef<Set<string>>(new Set());
   const bargeRestarts = useRef(0);
+  const spokeUntil = useRef(0);
   const pendingStart = useRef(false);
   /** the streaming answer being read: `queued` sentences handed to the speaker; `dead` = stopped / barged in */
   const stream = useRef<{ id: number; queued: number; started: boolean; dead: boolean } | null>(null);
@@ -143,12 +148,23 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
     if (e !== 'network' && e !== 'other') setMode(false);
   }
 
-  function isEcho(t: string): boolean {
-    const tk = tokens(t);
-    if (!tk.length) return true;
-    const hit = tk.filter((w) => spoken.current.has(w)).length;
-    return hit / tk.length >= 0.6;
+  /** does a heard word match something we said? fuzzy: the recogniser mangles our own voice (endings, typos) */
+  function saidWord(w: string): boolean {
+    if (spoken.current.has(w)) return true;
+    if (w.length <= 2) return true; // short words are noise either way
+    for (const s of spoken.current) {
+      if (s.length >= 4 && w.length >= 4 && s.slice(0, 4) === w.slice(0, 4)) return true;
+      if (Math.abs(s.length - w.length) <= 2 && lev(s, w, 2) <= (w.length > 6 ? 2 : 1)) return true;
+    }
+    return false;
   }
+  /** share of the heard words that we said ourselves */
+  function echoShare(t: string): number {
+    const tk = tokens(t);
+    if (!tk.length) return 1;
+    return tk.filter(saidWord).length / tk.length;
+  }
+  function isEcho(t: string): boolean { return echoShare(t) >= 0.4; }
   function isStop(t: string): boolean {
     const tk = tokens(t);
     return tk.length > 0 && tk.length <= 2 && tk.every((w) => STOP_WORDS.has(w));
@@ -162,7 +178,18 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
   }
 
   function onFinal(t: string) {
-    if (phaseRef.current === 'speaking') { if (isEcho(t)) return; bargeIn(); }
+    if (phaseRef.current === 'speaking') {
+      // the mic hears the speaker (no echo cancellation for speechSynthesis): only a stop word, or a clearly
+      // different sentence of 3+ words, counts as the user talking over the voice
+      if (isStop(t)) { deps.current.setInput(''); stopAll(true); deps.current.mood(['idle']); return; }
+      if (tokens(t).length < 3 || echoShare(t) >= 0.25) return;
+      bargeIn();
+    } else if (Date.now() < spokeUntil.current + ECHO_TAIL_MS && isEcho(t)) {
+      // the tail of our own answer caught by the freshly opened mic: listen again instead of asking it back
+      deps.current.setInput('');
+      if (modeRef.current) loopT.current = window.setTimeout(() => { if (phaseRef.current === 'idle' && modeRef.current) startListening(); }, 300);
+      return;
+    }
     if (isStop(t)) { deps.current.setInput(''); stopAll(true); deps.current.mood(['idle']); return; }
     deps.current.setInput(t);
     setHeard(t);
@@ -176,7 +203,7 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
     let first = true;
     rec.current = listen(locale, {
       onInterim: (t) => {
-        if (phaseRef.current === 'speaking') { if (isEcho(t)) return; bargeIn(); }
+        if (phaseRef.current === 'speaking') return; // interim guesses of our own voice: never barge in on them
         if (phaseRef.current !== 'listening') return;
         if (first) { first = false; setNotice(null); }
         deps.current.setInput(t);
@@ -260,12 +287,13 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
       onEnd: (completed) => {
         clearInterval(talkT.current);
         setSpeakingId(null);
+        spokeUntil.current = Date.now();
         stopListening(); // the barge-in listener
         if (phaseRef.current !== 'speaking') return; // barged in / stopped: the new phase is already set
         setPhase('idle');
         if (!completed) { deps.current.mood(['idle']); return; }
         deps.current.mood(['happy', 700]);
-        if (loop && modeRef.current) loopT.current = window.setTimeout(() => { if (phaseRef.current === 'idle' && modeRef.current) startListening(); }, 750);
+        if (loop && modeRef.current) loopT.current = window.setTimeout(() => { if (phaseRef.current === 'idle' && modeRef.current) startListening(); }, AFTER_SPEECH_MS);
       },
     }, open);
     // barge-in: keep a recogniser open while speaking (not on iOS, where the mic would mute the voice)
