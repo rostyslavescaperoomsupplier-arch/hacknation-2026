@@ -131,7 +131,8 @@ function Shell({ initialLang }: { initialLang: Lang }) {
 
   // phones: while the chat field has focus the bottom tab bar steps aside for the composer + keyboard
   useEffect(() => {
-    const on = (e: FocusEvent) => setTyping(!!(e.target as Element | null)?.closest?.('.asst-dock'));
+    // only a text field brings up the keyboard; a focused switch / mic button keeps the tab bar
+    const on = (e: FocusEvent) => setTyping(!!(e.target as Element | null)?.matches?.('.asst-dock :is(input:not([type=checkbox]):not([type=radio]), textarea)'));
     const off = () => setTyping(false);
     addEventListener('focusin', on);
     addEventListener('focusout', off);
@@ -191,7 +192,7 @@ function Shell({ initialLang }: { initialLang: Lang }) {
         <div className="gutter mx-auto flex max-w-6xl items-center gap-2 py-2 sm:gap-3 lg:flex-wrap lg:gap-x-4 lg:py-0 lg:pt-1 xl:flex-nowrap xl:gap-x-3">
           <a href="#asystent" onClick={(e) => { e.preventDefault(); setTab('asystent'); }}
              className="flex min-w-0 flex-col py-1 no-underline lg:shrink-0 lg:py-3">
-            <span className="tech-title truncate text-[1.25rem] tracking-[0.06em] sm:text-[1.5rem]">Jantar Unity</span>
+            <span className="tech-title truncate text-[1.125rem] tracking-[0.06em] min-[400px]:text-[1.25rem] sm:text-[1.5rem]">Jantar Unity</span>
             <span className="tech-kicker hidden truncate sm:block xl:hidden">{s.app_kicker}</span>
           </a>
 
@@ -214,16 +215,16 @@ function Shell({ initialLang }: { initialLang: Lang }) {
                   </svg>
                 </span>
                 <span className="max-w-full truncate lg:hidden">{short[t] ?? label[t]}</span>
-                <span className="hidden lg:inline">{label[t]}</span>
+                <span className="hidden whitespace-nowrap lg:inline">{label[t]}</span>
               </button>
             ))}
           </div>
 
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <UserChip lang={lang} />
             <button type="button" aria-pressed={theme === 'night'} onClick={toggleNight} title={s.night}
                     aria-label={s.night}
-                    className="hdr-btn tap inline-flex items-center justify-center gap-2 rounded-card border border-line bg-paper px-3 text-sm font-semibold uppercase text-ink-2 hover:text-ink">
+                    className="hdr-btn tap inline-flex items-center justify-center gap-2 rounded-card border border-line bg-paper px-2.5 text-sm font-semibold uppercase text-ink-2 hover:text-ink sm:px-3">
               <MoonIcon />
               <span className="hidden sm:inline lg:hidden" aria-hidden="true">{s.night_short}</span>
             </button>

@@ -43,7 +43,7 @@ export default function UserChip({ lang }: { lang: Lang }) {
     return (
       <div className="relative">
         <button type="button" onClick={() => openLogin('manual')} disabled={!ready}
-                className="hdr-btn tap inline-flex items-center justify-center gap-2 rounded-card border border-ink bg-paper px-3 text-sm font-bold uppercase text-ink hover:bg-paper-2">
+                className="hdr-btn tap inline-flex items-center justify-center gap-2 rounded-card border border-ink bg-paper px-2.5 text-sm font-bold uppercase text-ink hover:bg-paper-2 sm:px-3">
           <PersonIcon />
           <span className="hidden sm:inline">{L(lang, 'Zaloguj', 'Log in')}</span>
           <span className="sr-only sm:hidden">{L(lang, 'Zaloguj', 'Log in')}</span>
@@ -58,7 +58,7 @@ export default function UserChip({ lang }: { lang: Lang }) {
     <div ref={wrap} className="relative">
       <button type="button" aria-expanded={open} aria-controls={`${ids}-m`} onClick={() => setOpen((v) => !v)}
               aria-label={L(lang, `Zalogowany: ${user.name}, ${user.rank}`, `Logged in: ${user.name}, ${user.rank}`)}
-              className="auth-chip tap inline-flex max-w-[16rem] items-center gap-2 rounded-card border border-line bg-paper px-2 text-left hover:bg-paper-2">
+              className="auth-chip tap inline-flex max-w-[16rem] items-center gap-2 rounded-card border border-line bg-paper px-1.5 text-left hover:bg-paper-2 sm:px-2">
         <span aria-hidden="true" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-card bg-paper-2 font-display text-base font-bold">{initials(user.name)}</span>
         {/* name + rank where the header has room: tablets (tabs at the bottom); desktops share the row with 7 tabs, so initials + role */}
         <span className="hidden min-w-0 flex-col leading-tight sm:flex lg:hidden">
