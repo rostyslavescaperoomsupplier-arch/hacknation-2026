@@ -1,0 +1,18 @@
+[Unit]
+Description=Jantar Unity crew assistant (Mewka) - chat API + static front end
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/jantar-assistant
+EnvironmentFile=/etc/jantar-assistant.env
+Environment=PORT=3003
+ExecStart=/usr/bin/node --experimental-strip-types server/index.ts
+Restart=always
+RestartSec=3
+User=www-data
+Group=www-data
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target
