@@ -180,23 +180,43 @@ export class Speaker {
   private opts: SpeakOpts | null = null;
   private watchdog = 0;
   private current: SpeechSynthesisUtterance | null = null; // keep a reference: Chrome GCs utterances and drops onend
+  /** streaming: more sentences may still come (append); an empty queue waits instead of finishing */
+  private open = false;
+  private waiting = false;
 
   get speaking() { return this.opts !== null; }
 
-  speak(segs: Seg[], opts: SpeakOpts) {
+  /** `open` = streaming: keep going until close(); feed more with append() */
+  speak(segs: Seg[], opts: SpeakOpts, open = false) {
     if (!ttsSupported()) { opts.onEnd?.(false); return; }
     this.stop(false);
     this.queue = sentences(segs, opts.locale);
     this.i = 0;
     this.opts = opts;
-    if (!this.queue.length) { this.finish(true); return; }
+    this.open = open;
+    if (!this.queue.length) { if (open) this.waiting = true; else this.finish(true); return; }
     try { speechSynthesis.cancel(); speechSynthesis.resume(); } catch { /* ignore */ }
     this.next();
+  }
+
+  /** streaming: add sentences that are already split (see sentences()); resumes if the queue had run dry */
+  append(sents: Seg[]) {
+    if (!this.opts || !sents.length) return;
+    this.queue.push(...sents);
+    if (this.waiting) { this.waiting = false; this.next(); }
+  }
+
+  /** streaming: no more sentences; finishes now if everything was already said */
+  close() {
+    this.open = false;
+    if (this.opts && this.waiting) { this.waiting = false; this.finish(true); }
   }
 
   /** stop now; onEnd(false) unless silent */
   stop(notify = true) {
     const o = this.opts;
+    this.open = false;
+    this.waiting = false;
     this.token++;
     clearTimeout(this.watchdog);
     this.opts = null;
@@ -229,6 +249,8 @@ export class Speaker {
 
   private finish(completed: boolean) {
     const o = this.opts;
+    this.open = false;
+    this.waiting = false;
     this.opts = null;
     this.current = null;
     clearTimeout(this.watchdog);
@@ -238,7 +260,10 @@ export class Speaker {
   private next() {
     const o = this.opts;
     if (!o) return;
-    if (this.i >= this.queue.length) { this.finish(true); return; }
+    if (this.i >= this.queue.length) {
+      if (this.open) { this.waiting = true; return; } // streaming: wait for append() / close()
+      this.finish(true); return;
+    }
     const seg = this.queue[this.i];
     const tk = ++this.token;
     const u = new SpeechSynthesisUtterance(seg.text);

@@ -26,12 +26,14 @@ class BodyError extends Error {}
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
+    let tooLarge = false;
     req.setEncoding('utf8');
     req.on('data', (c: string) => {
+      if (tooLarge) return; // keep draining so the 400 can still be written; the socket closes after it
       data += c;
-      if (data.length > 100_000) { reject(new BodyError('too large')); req.destroy(); }
+      if (data.length > 100_000) { tooLarge = true; data = ''; reject(new BodyError('too large')); }
     });
-    req.on('end', () => resolve(data));
+    req.on('end', () => { if (!tooLarge) resolve(data); });
     req.on('error', () => reject(new BodyError('read error')));
   });
 }
@@ -56,7 +58,7 @@ async function admit(req: IncomingMessage, res: ServerResponse, route: string, t
   }
   let input: ChatInput | null = null;
   try { input = validateChat(await readBody(req)); } catch { /* too large / broken body */ }
-  if (!input) { send(res, 400, { error: 'bad request' }); log(route, 400, t0); return null; }
+  if (!input) { send(res, 400, { error: 'bad request' }, { connection: 'close' }); log(route, 400, t0); return null; }
   return input;
 }
 

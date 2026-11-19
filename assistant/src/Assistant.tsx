@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import type { Action, Answer, Lang, Stair, Turn } from './types';
 import { STR, CONTACT, contactLabel } from './i18n';
-import { ask } from './adapter';
+import { askStream, paragraphs } from './adapter';
 import { MewkaReact } from '../../mewka/src/mewka/MewkaReact';
 import type { MewkaState } from '../../mewka/src';
 import './assistant.css';
@@ -10,12 +10,21 @@ import { useVoice, type Voice } from './voice/useVoice';
 import { ListenButton, MicButton, VoiceBar } from './ui/Voice';
 import { trackKeyboardInset } from './lib/keyboard-inset';
 
-type Msg = { id: number; role: 'user'; text: string } | { id: number; role: 'bot'; answer: Answer; note?: string };
+/** `streamed`: the text was already shown growing in the live bubble (no second entrance animation / scroll jump) */
+type Msg = { id: number; role: 'user'; text: string } | { id: number; role: 'bot'; answer: Answer; note?: string; streamed?: boolean };
 
 let seq = 0;
 
+// strings of the streaming UI (i18n.ts is shared; Polish first, English for the rest)
+const UI = {
+  pl: { stop: 'Zatrzymaj', stopped: 'Odpowiedź przerwana.' },
+  en: { stop: 'Stop', stopped: 'Answer stopped.' },
+};
+
 // Mewka beats. Short on purpose: nothing decorative runs > 5 s (WCAG 2.2.2).
 const T = { greet: 1800, talk: 960, point: 2600, unsure: 1500, happy: 700 };
+/** while an answer streams in, the gull's talking beat (a one-shot) is re-triggered about this often */
+const TALK_EVERY = 1200;
 /** states the avatar of the latest answer mirrors (the big one shows every state) */
 const ANSWER_STATES: MewkaState[] = ['talking', 'pointing', 'unsure', 'happy'];
 
@@ -37,6 +46,13 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
+  /** the answer that is streaming in right now (text so far); null = none / nothing arrived yet */
+  const [live, setLive] = useState<{ id: number; text: string } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  /** id of the bot answer that is in flight (for the voice stream) */
+  const pendingId = useRef(0);
+  /** bumped by "clear": a request from before the clear must not write into the new conversation */
+  const genRef = useRef(0);
   const history = useRef<Turn[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const end = useRef<HTMLDivElement>(null);
@@ -76,6 +92,10 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
     submit: (t) => sendRef.current(t),
     mood: (...beats) => play(...beats),
   });
+  // stream callbacks outlive the render that started them: always talk to the latest voice API
+  const voiceRef = useRef<Voice>(voice);
+  voiceRef.current = voice;
+  const ui = UI[lang === 'pl' ? 'pl' : 'en'];
 
   async function send(q: string) {
     const query = q.trim();
@@ -86,17 +106,49 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
     history.current = [...history.current, { role: 'user', content: query }];
     setBusy(true);
     play(['thinking']);
-    const started = performance.now();
-    const a = await ask(history.current, lang);
-    const wait = Math.max(0, 280 - (performance.now() - started));
-    await new Promise((r) => setTimeout(r, wait));
-    if (!a.remoteFailed) history.current = [...history.current, { role: 'assistant', content: a.text.join('\n\n') }];
-    else history.current = history.current.slice(0, -1); // let the user simply ask again
     const id = ++seq;
-    setMsgs((m) => [...m, { id, role: 'bot', answer: a }]);
+    pendingId.current = id;
+    const gen = genRef.current;
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    // voice mode + read aloud: speak sentence by sentence while the answer streams in
+    const voiced = voiceRef.current.beginStream(id);
+    let streamed = false;
+    let lastBeat = 0;
+    const started = performance.now();
+    const a = await askStream(history.current, lang, {
+      signal: ctrl.signal,
+      onDelta: (text) => {
+        if (gen !== genRef.current) return;
+        if (!text) { streamed = false; setLive(null); play(['thinking']); return; } // falling back to the JSON endpoint
+        setLive({ id, text });
+        const voiceTalks = voiced && voiceRef.current.pushStreamText(id, text);
+        const now = performance.now();
+        if (!voiceTalks && (!streamed || now - lastBeat >= TALK_EVERY)) {
+          lastBeat = now;
+          if (streamed) play(['idle', 40], ['talking']); else play(['talking']);
+        }
+        streamed = true;
+      },
+    });
+    if (abortRef.current === ctrl) abortRef.current = null;
+    if (gen !== genRef.current) return; // the conversation was cleared meanwhile
+    if (!streamed) await new Promise((r) => setTimeout(r, Math.max(0, 280 - (performance.now() - started))));
+    // the history only keeps complete answers; a failed / stopped question is dropped (the user can simply ask again)
+    if (!a.remoteFailed) history.current = [...history.current, { role: 'assistant', content: a.text.join('\n\n') }];
+    else history.current = history.current.slice(0, -1);
+    setLive(null);
+    if (a.aborted) {
+      if (a.text.length) setMsgs((m) => [...m, { id, role: 'bot', answer: a, note: ui.stopped, streamed: true }]);
+      setBusy(false);
+      voiceRef.current.endStream(id, null);
+      play(['idle']);
+      return;
+    }
+    setMsgs((m) => [...m, { id, role: 'bot', answer: a, streamed }]);
     setBusy(false);
     // voice mode: the answer is read aloud and the gull talks per sentence instead of the beats below
-    if (voice.onAnswer(id, a)) return;
+    if (voiced ? voiceRef.current.endStream(id, a) : voiceRef.current.onAnswer(id, a)) return;
     if (a.fallback) play(['talking', T.talk / 2], ['unsure', T.unsure], ['pointing', T.point]);
     else if (a.actions?.length || a.sources.length) play(['talking', T.talk], ['pointing', T.point]);
     else play(['talking', T.talk]);
@@ -113,6 +165,23 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
   }, []);
 
   sendRef.current = send;
+
+  /** Stop button / Escape: abort the answer that is streaming in (what arrived so far stays, marked as stopped) */
+  function stopAnswer() {
+    abortRef.current?.abort();
+    input.current?.focus();
+  }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // not checking defaultPrevented: the voice layer may already have used Escape to stop speaking
+      if (e.key !== 'Escape' || !abortRef.current || document.querySelector('dialog[open]')) return;
+      e.preventDefault();
+      abortRef.current.abort();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); abortRef.current?.abort(); };
+  }, []);
 
   // input focus / typing -> listening (wing to ear); blur or emptied -> idle
   function onInputFocus() { if (!busy) play(['listening']); }
@@ -150,9 +219,16 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
     const reading = performance.now() - userScrollAt.current < 1200;
     const behavior = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
     const last = msgs[msgs.length - 1];
-    const el = !busy && last.role === 'bot' ? document.getElementById(`msg-${last.id}`) : null;
+    // a streamed answer was followed while it grew: stay at the end instead of jumping back to its start
+    const el = !busy && last.role === 'bot' && !last.streamed ? document.getElementById(`msg-${last.id}`) : null;
     if (!reading) (el ?? end.current)?.scrollIntoView({ block: el ? 'start' : 'nearest', behavior });
   }, [msgs.length, busy]);
+
+  // follow the growing answer (instant: smooth scrolling on every chunk would wobble), unless the user scrolls
+  useEffect(() => {
+    if (!live || performance.now() - userScrollAt.current < 1200) return;
+    end.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  }, [live?.text]);
 
   function onSubmit(ev: FormEvent) {
     ev.preventDefault();
@@ -168,6 +244,11 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
   }
 
   function clear() {
+    genRef.current++;
+    const streaming = abortRef.current;
+    abortRef.current = null;
+    streaming?.abort();
+    if (streaming) { voice.endStream(pendingId.current, null); setBusy(false); setLive(null); }
     voice.onUserInput();
     setMsgs([]);
     history.current = [];
@@ -203,13 +284,23 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
               </p>
             </div>
           ) : (
-            <BotAnswer key={m.id} id={`msg-${m.id}`} a={m.answer} lang={lang} note={m.note} mascot={mascot}
+            <BotAnswer key={m.id} id={`msg-${m.id}`} a={m.answer} lang={lang} note={m.note} mascot={mascot} animate={!m.streamed}
                        voice={voice} onListen={() => voice.read(m.id, m.answer)} onAction={runAction}
                        mood={i === msgs.length - 1 && ANSWER_STATES.includes(mood) ? mood : 'idle'} />
           ),
         )}
       </div>
-      {busy && (
+      {/* the answer while it streams in: outside the log (not a live region, so screen readers are not flooded
+          with every chunk); the finished answer is added to the log once and announced then */}
+      {busy && live && (
+        <div aria-busy="true">
+          <BotBubble mascot={mascot} id={`msg-${live.id}`} animate mood={ANSWER_STATES.includes(mood) ? mood : 'idle'}>
+            <span className="sr-only">{s.bot}: </span>
+            {paragraphs(live.text).map((t, i) => <p key={i} className="max-w-[62ch] whitespace-pre-wrap leading-relaxed">{t}</p>)}
+          </BotBubble>
+        </div>
+      )}
+      {busy && !live && (
         <div role="status" className="asst-bot flex items-center gap-3">
           <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-gold text-gold-ink"><Icon name="spark-solid" size={14} /></span>
           <span className="panel inline-flex items-center gap-3 rounded-tl-[2px] px-4 py-2.5 text-sm text-ink-2">
@@ -252,11 +343,19 @@ export default function Assistant({ lang, onRoute, onDrill }: AssistantProps) {
           </div>
           <div className="asst-composer-btns flex shrink-0 items-center gap-2">
             <MicButton voice={voice} lang={lang} />
-            <button type="submit" disabled={busy || !value.trim()}
+            {busy ? (
+              <button type="button" onClick={stopAnswer} aria-keyshortcuts="Escape" title={`${ui.stop} (Esc)`}
+                      className="asst-send tap inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-ink bg-paper px-4 font-semibold text-ink">
+                <Icon name="stop" size={14} />
+                <span className="sr-only sm:not-sr-only">{ui.stop}</span>
+              </button>
+            ) : (
+            <button type="submit" disabled={!value.trim()}
                     className="asst-send tap inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gold-ink px-4 font-semibold text-paper disabled:bg-paper-2 disabled:text-ink-2">
               <span className="sr-only sm:not-sr-only">{s.send}</span>
               <Icon name="arrow-right" size={18} />
             </button>
+            )}
           </div>
         </form>
         <p id="assistant-rodo-short" className="asst-rodo mt-2 text-[0.8rem] text-ink-2">{s.rodo}</p>
@@ -280,10 +379,10 @@ function BotBubble({ children, mascot, mood = 'idle', id, animate }: { children:
   );
 }
 
-function BotAnswer({ a, lang, note, mascot, mood, id, voice, onListen, onAction }: { a: Answer; lang: Lang; note?: string; mascot?: boolean; mood?: MewkaState; id?: string; voice: Voice; onListen(): void; onAction(a: Action): void }) {
+function BotAnswer({ a, lang, note, mascot, mood, id, voice, onListen, onAction, animate = true }: { a: Answer; lang: Lang; note?: string; mascot?: boolean; mood?: MewkaState; id?: string; voice: Voice; onListen(): void; onAction(a: Action): void; animate?: boolean }) {
   const s = STR[lang];
   return (
-    <BotBubble mascot={mascot} mood={mood} id={id} animate>
+    <BotBubble mascot={mascot} mood={mood} id={id} animate={animate}>
       <span className="sr-only">{s.bot}: </span>
       {note && <p className="text-sm text-warn">{note}</p>}
       {a.text.map((t, i) => <p key={i} className="max-w-[62ch] whitespace-pre-wrap leading-relaxed">{t}</p>)}

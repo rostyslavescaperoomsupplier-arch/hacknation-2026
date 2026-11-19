@@ -7,15 +7,19 @@
 //                    │ done: voice mode → listening again (hands-free loop); else idle
 //                    │ user speaks / mic / Escape / typing → stop speaking (barge-in)
 //
+// Streaming answers (beginStream / pushStreamText / endStream): the voice starts with the first COMPLETE sentence
+// while the rest is still arriving; a sentence counts as complete once the next one has begun (or its paragraph
+// closed with a blank line). The last one waits for endStream, which also adds whatever the final text has more.
+//
 // Every state is also text (visible status + one aria-live region); the gull only mirrors it.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Answer, Lang } from '../types';
 import { tokens } from '../lib/text';
 import type { MewkaState } from '../../../mewka/src';
-import { Speaker, earcon, isIOS, listen, pickVoice, sttSupported, ttsSupported, voicesReady, type Listening, type SttError } from './engine';
+import { Speaker, earcon, isIOS, listen, pickVoice, sentences, sttSupported, ttsSupported, voicesReady, type Listening, type Seg, type SttError } from './engine';
 import { LOCALE, VSTR } from './i18n';
 import { claim, release } from '../lib/bus';
-import { speakable, spokenWords } from './speakable';
+import { speakable, speechText, spokenWords } from './speakable';
 
 export type Phase = 'idle' | 'consent' | 'listening' | 'heard' | 'thinking' | 'speaking';
 type Beat = [MewkaState, number?];
@@ -73,6 +77,8 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
   const spoken = useRef<Set<string>>(new Set());
   const bargeRestarts = useRef(0);
   const pendingStart = useRef(false);
+  /** the streaming answer being read: `queued` sentences handed to the speaker; `dead` = stopped / barged in */
+  const stream = useRef<{ id: number; queued: number; started: boolean; dead: boolean } | null>(null);
   const deps = useRef({ setInput, submit, mood });
   deps.current = { setInput, submit, mood };
 
@@ -98,6 +104,7 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
 
   const stopSpeaking = useCallback((notify = false) => {
     clearInterval(talkT.current);
+    if (stream.current) stream.current.dead = true; // the rest of a streaming answer stays silent
     if (speaker.current?.speaking) speaker.current.stop(notify);
     setSpeakingId(null);
   }, []);
@@ -214,10 +221,28 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
   }
 
   function speak(id: number, a: Answer, loop: boolean) {
+    return startSpeech(id, speakable(a, lang), loop, false);
+  }
+
+  /** words we are about to say: the barge-in listener ignores them (echo of our own voice) */
+  function addEcho(segs: Seg[]) {
+    for (const w of tokens(spokenWords(segs))) spoken.current.add(w);
+  }
+
+  /** complete sentences of a streaming text (markers are already gone; links etc. removed by speechText) */
+  function streamSentences(text: string, final: boolean): Seg[] {
+    const segs = text.split(/\n[ \t]*\n/).map((p) => ({ text: speechText(p.trim(), lang) })).filter((x) => x.text);
+    const all = sentences(segs, locale);
+    // the last sentence may still grow, unless the answer is over or its paragraph is closed
+    return final || /\n[ \t]*\n\s*$/.test(text) ? all : all.slice(0, -1);
+  }
+
+  /** `open` = streaming: the speaker waits for more sentences until close() */
+  function startSpeech(id: number, segs: Seg[], loop: boolean, open: boolean) {
     const sp = speaker.current;
     if (!sp || !tts) return false;
+    if (stream.current && stream.current.id !== id) stream.current.dead = true; // "Listen" on another answer wins
     stopListening();
-    const segs = speakable(a, lang);
     spoken.current = new Set(tokens(spokenWords(segs)));
     setSpeakingId(id);
     setPhase('speaking');
@@ -242,7 +267,7 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
         deps.current.mood(['happy', 700]);
         if (loop && modeRef.current) loopT.current = window.setTimeout(() => { if (phaseRef.current === 'idle' && modeRef.current) startListening(); }, 750);
       },
-    });
+    }, open);
     // barge-in: keep a recogniser open while speaking (not on iOS, where the mic would mute the voice)
     if (loop && modeRef.current && sttSupported() && !isIOS()) { bargeRestarts.current = 0; startRec(); }
     return true;
@@ -311,6 +336,59 @@ export function useVoice({ lang, busy, setInput, submit, mood }: VoiceDeps) {
       if (modeRef.current && autoRef.current && tts) return speak(id, a, true);
       if (phaseRef.current === 'thinking') setPhase('idle');
       return false;
+    },
+    // ---- streaming answers (the chat calls these in order; any of them is a no-op for another id) ----
+    /** a streaming answer starts; true = voice mode reads it aloud (then call pushStreamText / endStream) */
+    beginStream(id: number): boolean {
+      stream.current = null;
+      if (!(modeRef.current && autoRef.current && tts && speaker.current)) return false;
+      stream.current = { id, queued: 0, started: false, dead: false };
+      return true;
+    },
+    /** the visible text so far; speaks every newly completed sentence. true = the voice drives the gull now */
+    pushStreamText(id: number, textSoFar: string): boolean {
+      const st = stream.current;
+      if (!st || st.id !== id || st.dead) return false;
+      const all = streamSentences(textSoFar, false);
+      if (all.length > st.queued) {
+        const fresh = all.slice(st.queued);
+        st.queued = all.length;
+        if (!st.started) {
+          st.started = startSpeech(id, fresh, true, true);
+          if (!st.started) st.dead = true;
+        } else {
+          addEcho(fresh);
+          speaker.current?.append(fresh);
+        }
+      }
+      return st.started;
+    },
+    /** the stream ended: `a` = the final answer (null = aborted by the user). true = the voice handles the gull */
+    endStream(id: number, a: Answer | null): boolean {
+      const st = stream.current;
+      if (!st || st.id !== id) {
+        if (a) return apiRef.current.onAnswer(id, a);
+        if (phaseRef.current === 'thinking') setPhase('idle');
+        return false;
+      }
+      stream.current = null;
+      if (!a) {
+        if (st.started && !st.dead) { stopSpeaking(); if (phaseRef.current === 'speaking') setPhase('idle'); }
+        if (phaseRef.current === 'thinking') setPhase('idle');
+        return false;
+      }
+      if (st.dead) { if (phaseRef.current === 'thinking') setPhase('idle'); return true; } // stopped / barged in meanwhile
+      const all = streamSentences(a.text.join('\n\n'), true);
+      if (!st.started) {
+        if (startSpeech(id, all, true, false)) return true;
+        if (phaseRef.current === 'thinking') setPhase('idle');
+        return false;
+      }
+      const rest = all.slice(st.queued);
+      addEcho(rest);
+      speaker.current?.append(rest);
+      speaker.current?.close();
+      return true;
     },
     /** typing, sending or clearing: new input always silences the voice */
     onUserInput() {
