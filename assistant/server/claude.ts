@@ -14,13 +14,22 @@
 //     The fake echoes the last question, streams in small chunks with markers split across chunks
 //     ([[ROUTE:cabins-aft:stair-aft]] [[DRILL:fire]]), cites the first knowledge document when there is one, and reacts
 //     to trigger words in the last question: FAKE_REFUSAL -> stop_reason "refusal"; FAKE_ERROR -> upstream error (502 /
-//     SSE error); FAKE_KONTAKT -> adds [[KONTAKT]] (fallback: true); FAKE_SLOW -> 200 ms between chunks (disconnect tests).
+//     SSE error); FAKE_KONTAKT -> adds [[KONTAKT]] (fallback: true); FAKE_SLOW -> 200 ms between chunks (disconnect tests);
+//     FAKE_TOOL -> (when the crew tools are on) first calls find_crew {query:"bosman"} (stop_reason "tool_use"), then
+//     answers from the tool result: the first person's name, rank and room, plus [[ROUTE:<zone>]] for that room.
+//
+// Crew tools (crew.ts, only when CREW_API is not "off"): read-only tools over the live crew database. Both ask() and
+// askStream() run a manual tool loop: stop_reason "tool_use" -> run every tool_use block, send all tool_result blocks back
+// in one user message (is_error on failures), at most MAX_TOOL_ROUNDS rounds; the last allowed round sets
+// tool_choice "none". The text of all rounds makes up the reply; deltas pass through one MarkerFilter across rounds.
 import Anthropic from '@anthropic-ai/sdk';
 import type {
   BetaContentBlockParam,
   BetaMessage,
   BetaMessageParam,
   BetaRawMessageStreamEvent,
+  BetaToolResultBlockParam,
+  BetaToolUseBlock,
   BetaRequestDocumentBlock,
   BetaTextCitation,
   MessageCreateParamsNonStreaming,
@@ -29,6 +38,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Lang, Turn } from './guard.ts';
+import { CREW_TOOLS, CREW_TOOL_NAMES, crewEnabled, runCrewTool } from './crew.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const MODEL = process.env.ASSISTANT_MODEL || 'claude-opus-5-5';
@@ -37,6 +47,7 @@ const MAX_TOKENS = 4000; // replies are 2-5 sentences read aloud; a hard cost ca
 const KNOWLEDGE = readFileSync(path.join(here, 'knowledge.md'), 'utf8');
 const KNOWLEDGE_DIR = path.join(here, 'knowledge');
 const CONTACT_MARK = '[[KONTAKT]]';
+const MAX_TOOL_ROUNDS = 5;
 
 export interface Source { label: string; href: string }
 export type Action =
@@ -158,7 +169,7 @@ Emergencies: when the question describes an emergency (fire, smoke, flooding, ma
 first give the immediate actions in order (raise the alarm, report to the bridge with location and type, protect people,
 first response only if safe), then say plainly to follow the master's orders, the ship's Muster List and the SMS procedures.
 Never suggest abandoning ship unless the master orders it. Never invent ship-specific data (numbers, locations, crew roles,
-phone extensions) that is not in the knowledge below; say it must be checked in the ship's documents.
+phone extensions) that is not in the knowledge below${crewEnabled ? ' or in a crew tool result' : ''}; say it must be checked in the ship's documents.
 This is training material based on general SOLAS / IMO practice and a stylised 3D model, not the ship's official documents;
 say so briefly when it matters.
 
@@ -180,7 +191,20 @@ Examples: "pożar w kabinach na rufie" -> immediate actions, then [[ROUTE:cabins
 If the answer is not in the knowledge and you are not sure, say honestly that you do not know, tell them to ask
 the officer on watch, and end the reply with the exact marker ${CONTACT_MARK} so the app shows the contact to the bridge.
 Never ask for personal data. You are an AI; say so if asked.
-${DOCS.length ? `
+${crewEnabled ? `
+Crew database: you have read-only tools over the live crew database. It is filled by the card check-in terminals in the
+rooms: each card tap records who entered which room and when, so "where someone is" means the room of their last check-in
+(and "since" is that time). Use the tools whenever the question is about specific people, who is where, how many people are
+in a room or zone, staffing, lone workers or overdue check-ins; never guess these from memory. Answer with names, ranks and
+places (room name, deck) and say how long ago the check-in was, in minutes or hours, not as a raw timestamp. Times in the
+results are UTC. If several people match, name them briefly or ask which one. Privacy: share only on-board information
+(where, since when, rank, cabin, phone extension); give nationality or date of birth only when the user says they need it
+for their role (e.g. muster list, medical, the master) and then call find_crew with details true. If a tool returns
+"crew database unavailable", say plainly that the crew database (baza załogi) is unavailable right now and suggest asking
+the bridge; do not make up locations. When you tell where a person or a room is and its result has a zone from the Zones
+list below, you may add [[ROUTE:<zone>]] for that zone so the app can show it on the ship model; zone "boat-deck" or null
+has no route marker.
+` : ''}${DOCS.length ? `
 Documents: the first user message carries the ship documents loaded on this terminal (${DOCS.map((d) => d.title).join(', ')}).
 When a question is covered by them, answer from them and rely on them over general practice; the app shows your citations
 as sources. If a document is marked as a sample or training material, say so when you use it.
@@ -233,6 +257,7 @@ export function buildParams(lang: Lang, turns: Turn[]): CreateParams {
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
     output_config: { effort: 'low' },
+    ...(crewEnabled ? { tools: CREW_TOOLS, tool_choice: { type: 'auto' } } : {}),
     system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
     messages: [...messages, { role: 'system', content: `Reply in ${LANG_NAME[lang] ?? 'the language of the last user message'}.` }],
   } as CreateParams;
@@ -262,26 +287,53 @@ function citationsToSources(cits: BetaTextCitation[]): Source[] {
   return out;
 }
 
-/** Final shape from a complete message. Non-text blocks (fallback boundaries, thinking) are skipped. */
-export function toReply(msg: BetaMessage, lang: Lang): Reply {
-  if (msg.stop_reason === 'refusal') return { text: [], sources: [], fallback: true, actions: [] };
-  let text = '';
+/** Text of one message (text blocks only; tool_use, thinking and fallback boundaries are skipped). */
+const messageText = (msg: BetaMessage) => msg.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+/** Text of all tool-loop rounds: rounds with text joined by a blank line (askStream emits the same separator). */
+const roundsText = (msgs: BetaMessage[]) => msgs.map(messageText).filter((t) => t.trim()).join('\n\n');
+
+/** Final shape from the complete message(s) of one answer (one per tool-loop round). */
+export function toReply(msgs: BetaMessage | BetaMessage[], lang: Lang): Reply {
+  const list = Array.isArray(msgs) ? msgs : [msgs];
+  if (!list.length || list[list.length - 1].stop_reason === 'refusal') return { text: [], sources: [], fallback: true, actions: [] };
+  const text = roundsText(list);
   const cits: BetaTextCitation[] = [];
-  for (const block of msg.content) {
-    if (block.type !== 'text') continue;
-    text += block.text;
-    if (block.citations) cits.push(...block.citations);
-  }
+  for (const msg of list) for (const block of msg.content) if (block.type === 'text' && block.citations) cits.push(...block.citations);
   const contact = text.includes(CONTACT_MARK);
   const parsed = parseActions(text, lang);
   const paras = parsed.text.trim().split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   return { text: paras, sources: citationsToSources(cits), fallback: contact || !paras.length, actions: parsed.actions };
 }
 
-/** Non-streaming call (POST /api/chat). */
+/** After one round: when the model asked for crew tools, append its whole response and all tool results to the
+ *  conversation and return true (call again); otherwise false (the answer is complete). */
+async function toolRound(params: CreateParams, msg: BetaMessage, round: number): Promise<boolean> {
+  if (msg.stop_reason !== 'tool_use') return false; // end_turn, max_tokens (a cut tool input never runs), refusal, ...
+  const uses = msg.content.filter((b): b is BetaToolUseBlock => b.type === 'tool_use');
+  if (!uses.length) return false;
+  const results: BetaToolResultBlockParam[] = await Promise.all(uses.map(async (u) => {
+    const out = CREW_TOOL_NAMES.has(u.name)
+      ? await runCrewTool(u.name, u.input)
+      : { content: JSON.stringify({ error: `unknown tool ${u.name}` }), isError: true };
+    return { type: 'tool_result', tool_use_id: u.id, content: out.content, ...(out.isError ? { is_error: true } : {}) };
+  }));
+  params.messages.push({ role: 'assistant', content: msg.content as BetaContentBlockParam[] });
+  params.messages.push({ role: 'user', content: results });
+  if (round + 1 >= MAX_TOOL_ROUNDS) params.tool_choice = { type: 'none' }; // last call: answer from what is there
+  return true;
+}
+
+/** Non-streaming call (POST /api/chat), with the crew tool loop. */
 export async function ask(lang: Lang, turns: Turn[], signal?: AbortSignal): Promise<Reply> {
-  const msg = await getClient().beta.messages.create(buildParams(lang, turns), { signal });
-  return toReply(msg, lang);
+  const params = buildParams(lang, turns);
+  const msgs: BetaMessage[] = [];
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    signal?.throwIfAborted();
+    const msg = await getClient().beta.messages.create(params, { signal });
+    msgs.push(msg);
+    if (!(await toolRound(params, msg, round))) break;
+  }
+  return toReply(msgs, lang);
 }
 
 /** Holds back text from `[[` until the marker closes (dropped) or clearly is not a marker (released). */
@@ -313,25 +365,39 @@ export class MarkerFilter {
   }
 }
 
-/** Streaming call (POST /api/chat/stream). onDelta gets marker-free text; the returned Reply is authoritative. */
+/** Streaming call (POST /api/chat/stream), with the crew tool loop. onDelta gets marker-free text only (never tool
+ *  input); one MarkerFilter spans all rounds, so a marker split across rounds is still held back. The Reply is authoritative. */
 export async function askStream(lang: Lang, turns: Turn[], onDelta: (text: string) => void, signal?: AbortSignal): Promise<Reply> {
-  const stream = getClient().beta.messages.stream(buildParams(lang, turns), { signal });
-  const onAbort = () => stream.abort();
-  signal?.addEventListener('abort', onAbort, { once: true });
+  const params = buildParams(lang, turns);
   const filter = new MarkerFilter();
-  try {
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        const t = filter.push(event.delta.text);
-        if (t) onDelta(t);
+  const msgs: BetaMessage[] = [];
+  let hadText = false; // some earlier round produced text: the next round's text starts after a blank line
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    signal?.throwIfAborted();
+    const stream = getClient().beta.messages.stream(params, { signal });
+    const onAbort = () => stream.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    let roundText = '';
+    try {
+      for await (const event of stream) {
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          let chunk = event.delta.text;
+          if (!roundText.trim() && hadText && chunk.trim()) chunk = '\n\n' + chunk.trimStart();
+          roundText += event.delta.text;
+          const t = filter.push(chunk);
+          if (t) onDelta(t);
+        }
       }
+      msgs.push(await stream.finalMessage());
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
-    const t = filter.flush();
-    if (t) onDelta(t);
-    return toReply(await stream.finalMessage(), lang);
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
+    if (roundText.trim()) hadText = true;
+    if (!(await toolRound(params, msgs[msgs.length - 1], round))) break;
   }
+  const t = filter.flush();
+  if (t) onDelta(t);
+  return toReply(msgs, lang);
 }
 
 /** Short log line for an upstream error (never sent to clients). */
@@ -355,16 +421,51 @@ export function fakeClient(): ClaudeClient {
     }
     return '';
   };
+  /** tool_result blocks of the last turn, when the last turn is the tool results of a fake tool round. */
+  const lastToolResults = (p: CreateParams): BetaToolResultBlockParam[] => {
+    const m = [...p.messages].reverse().find((x) => (x.role as string) !== 'system');
+    if (!m || m.role !== 'user' || typeof m.content === 'string') return [];
+    return m.content.filter((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
+  };
+  const split = (text: string) => {
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += 7) chunks.push(text.slice(i, i + 7)); // splits markers across chunks
+    return chunks;
+  };
   const build = (p: CreateParams): { chunks: string[]; msg: BetaMessage; error?: boolean; slow: boolean } => {
     const q = lastQuestion(p);
     const base = { id: 'msg_fake', type: 'message', role: 'assistant', model: MODEL, stop_sequence: null, stop_details: null,
       usage: { input_tokens: 0, output_tokens: 0 } };
     if (q.includes('FAKE_REFUSAL'))
       return { chunks: [], slow: false, msg: { ...base, content: [], stop_reason: 'refusal' } as unknown as BetaMessage };
+    const hasCrewTool = (p.tools ?? []).some((t) => (t as { name?: string }).name === 'find_crew');
+    if (q.includes('FAKE_TOOL') && hasCrewTool) {
+      const results = lastToolResults(p);
+      if (!results.length) { // round 1: a short preamble, then the tool call
+        const text = 'Sprawdzam w bazie załogi.';
+        const msg = { ...base, stop_reason: 'tool_use', content: [
+          { type: 'text', text, citations: null },
+          { type: 'tool_use', id: 'toolu_fake_1', name: 'find_crew', input: { query: 'bosman' } },
+        ] } as unknown as BetaMessage;
+        return { chunks: split(text), msg, slow: false };
+      }
+      // round 2: answer from the tool result
+      const r = results[0];
+      const raw = typeof r.content === 'string' ? r.content : (r.content ?? []).map((b) => (b.type === 'text' ? b.text : '')).join('');
+      let text: string;
+      try {
+        const data = JSON.parse(raw);
+        const c = data.crew?.[0];
+        if (r.is_error || !c) text = `Baza załogi jest teraz niedostępna (${data.error ?? 'brak wyników'}). Zapytaj mostek.`;
+        else text = `Z bazy załogi: ${c.name}, ${c.rank}, jest teraz w: ${c.where ?? 'poza statkiem'}`
+          + `${c.minutes_ago != null ? `, od ${c.minutes_ago} min` : ''}.\n\n${c.zone ? `[[ROUTE:${c.zone}]]` : ''}`;
+      } catch { text = 'Baza załogi zwróciła niepoprawne dane.'; }
+      const msg = { ...base, stop_reason: 'end_turn', content: [{ type: 'text', text, citations: null }] } as unknown as BetaMessage;
+      return { chunks: split(text), msg, slow: false };
+    }
     const text = `Tryb testowy. Pytanie: ${short(q, 60)}\n\nJeden. Podnieś alarm. Dwa. Zgłoś na mostek.\n\n`
       + `[[ROUTE:cabins-aft:stair-aft]] [[DRILL:fire]]${q.includes('FAKE_KONTAKT') ? ' ' + CONTACT_MARK : ''}`;
-    const chunks: string[] = [];
-    for (let i = 0; i < text.length; i += 7) chunks.push(text.slice(i, i + 7)); // splits markers across chunks
+    const chunks = split(text);
     const doc = DOCS[0];
     const citations = doc
       ? [{ type: 'char_location', cited_text: (doc.text ?? doc.title).slice(0, 120), document_index: 0, document_title: doc.title,
@@ -398,6 +499,12 @@ export function fakeClient(): ClaudeClient {
               yield ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } });
             }
             if (r.chunks.length) yield ev({ type: 'content_block_stop', index: 0 });
+            for (const [i, b] of r.msg.content.entries()) { // tool_use blocks: start, input JSON, stop (never text)
+              if (b.type !== 'tool_use') continue;
+              yield ev({ type: 'content_block_start', index: i, content_block: { ...b, input: {} } });
+              yield ev({ type: 'content_block_delta', index: i, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input) } });
+              yield ev({ type: 'content_block_stop', index: i });
+            }
             yield ev({ type: 'message_delta', delta: { stop_reason: r.msg.stop_reason, stop_sequence: null }, usage: { output_tokens: 0 } });
             yield ev({ type: 'message_stop' });
           },

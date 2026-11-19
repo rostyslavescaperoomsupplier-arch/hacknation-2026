@@ -3,6 +3,8 @@
 //   POST /api/chat         { lang, messages: Turn[] } -> { text: string[], sources, fallback, actions }
 //   POST /api/chat/stream  same body -> Server-Sent Events: `delta` { text } (markers removed), then `done` (same shape as
 //                          /api/chat, authoritative) or `error` { error: "assistant unavailable" | "rate limited" | "bad request" }
+//   GET  /api/crew/{summary|rooms|rooms/:id|crew?q=|terminals|activity|alerts}
+//                          read-only proxy to the crew database (CREW_API), rooms/terminals + `place`; 503 when it is down (crew.ts)
 // Errors: 400 bad input, 403 bad origin / missing x-assistant-token, 429 rate limited (retry-after), 502 upstream failure.
 // Guard rules (rate limits, origin, ASSISTANT_TOKEN) live in guard.ts; the Claude call and ship documents in claude.ts.
 // The API key stays here (ANTHROPIC_API_KEY or an `ant auth login` profile); the browser never sees it.
@@ -14,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clientIp, corsOrigin, originAllowed, takeToken, tokenOk, validateChat, type ChatInput } from './guard.ts';
 import { FAKE, MODEL, ask, askStream, describeError, knowledgeStats } from './claude.ts';
+import { CREW_API, crewEnabled, handleCrewProxy } from './crew.ts';
 import { attachCrewVideoWebSocket } from './crew-video.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -151,6 +154,7 @@ const server = createServer(async (req, res) => {
       if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
       return url === '/api/chat' ? await chat(req, res, t0) : await chatStream(req, res, t0);
     }
+    if (await handleCrewProxy(req, res)) return;
     if (url.startsWith('/api/')) return send(res, 404, { error: 'not found' });
     serveStatic(req, res);
   } catch (e) {
@@ -160,4 +164,4 @@ const server = createServer(async (req, res) => {
 });
 // crew video chat between terminals (signalling WebSocket at /crew-video-ws, from branch videochat)
 attachCrewVideoWebSocket(server);
-server.listen(PORT, () => console.log(`[assistant] http://localhost:${PORT}  model=${MODEL}${FAKE ? '  FAKE client' : ''}`));
+server.listen(PORT, () => console.log(`[assistant] http://localhost:${PORT}  model=${MODEL}${FAKE ? '  FAKE client' : ''}  crew=${crewEnabled ? CREW_API : 'off'}`));

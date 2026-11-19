@@ -6,7 +6,8 @@
 //  - optional shared secret: when ASSISTANT_TOKEN is set every chat request needs header `x-assistant-token: <same value>`
 //    (the terminals' front end sends it from VITE_ASSISTANT_TOKEN).
 //  - body validation shared by /api/chat and /api/chat/stream.
-// Limits can be tuned with env (mainly for tests): RATE_IP_10MIN, RATE_IP_DAY, RATE_GLOBAL_DAY.
+//  - crew proxy (/api/crew/*, crew.ts) has its own per-IP bucket, 120 / min, so map polling never eats the chat limit.
+// Limits can be tuned with env (mainly for tests): RATE_IP_10MIN, RATE_IP_DAY, RATE_GLOBAL_DAY, RATE_CREW_MIN.
 import type { IncomingMessage } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 
@@ -24,6 +25,7 @@ export const LIMITS = {
   ipShort: { cap: num(process.env.RATE_IP_10MIN, 20), per: 10 * MIN },
   ipDay: { cap: num(process.env.RATE_IP_DAY, 300), per: DAY },
   globalDay: { cap: num(process.env.RATE_GLOBAL_DAY, 2000), per: DAY },
+  crewMin: { cap: num(process.env.RATE_CREW_MIN, 120), per: MIN },
 };
 
 // ---------- client IP ----------
@@ -43,7 +45,7 @@ export function clientIp(req: IncomingMessage): string {
 interface Bucket { tokens: number; last: number }
 interface Limit { cap: number; per: number }
 
-const buckets = new Map<string, Bucket>(); // keys: "s:<ip>", "d:<ip>", "global"
+const buckets = new Map<string, Bucket>(); // keys: "s:<ip>", "d:<ip>", "global", "c:<ip>" (crew proxy)
 
 function level(key: string, l: Limit, now: number): Bucket {
   let b = buckets.get(key);
@@ -71,10 +73,18 @@ export function takeToken(ip: string, now = Date.now()): RateResult {
   return { ok: true };
 }
 
+/** Crew proxy: one token from this IP's own crew bucket (separate from the chat buckets). */
+export function takeCrewToken(ip: string, now = Date.now()): RateResult {
+  const b = level('c:' + ip, LIMITS.crewMin, now);
+  if (b.tokens < 1) return { ok: false, retryAfter: waitFor(b, LIMITS.crewMin) };
+  b.tokens -= 1;
+  return { ok: true };
+}
+
 /** Drop buckets that refilled completely (idle clients). */
 export function cleanup(now = Date.now()) {
   for (const [key, b] of buckets) {
-    const l = key === 'global' ? LIMITS.globalDay : key.startsWith('s:') ? LIMITS.ipShort : LIMITS.ipDay;
+    const l = key === 'global' ? LIMITS.globalDay : key.startsWith('s:') ? LIMITS.ipShort : key.startsWith('c:') ? LIMITS.crewMin : LIMITS.ipDay;
     if (b.tokens + ((now - b.last) * l.cap) / l.per >= l.cap) buckets.delete(key);
   }
 }
