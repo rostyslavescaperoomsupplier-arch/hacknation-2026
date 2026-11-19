@@ -42,6 +42,8 @@ interface Track {
   sos: boolean;
   /** alarm id the wearer acknowledged on the band */
   ackedAlarm: string | null;
+  /** alarm id in which this person reached a muster station (status stays 'safe' near it: zone edges are noisy) */
+  safeIn: string | null;
   /** zone at the first fix after the alarm was raised: decides the muster station */
   alarmZone: { alarmId: string; zone: PosZone | null } | null;
 }
@@ -95,12 +97,20 @@ function stationFor(zone: PosZone | null, blocked: string | null, at: Vec3 | nul
   return isAlarmZone(zone) ? musterFor(zone, bl) : null;
 }
 
-/** Since when all fixes stayed within STILL_M of where the person is now (walking 1.2 m/s leaves it in seconds). */
-function stillSince(hist: { t: number; at: Vec3 }[], cur: Vec3, now: number): number {
+/** Since when the person has stayed in one spot. The spot is the centroid of the last ~10 s of fixes (BLE noise is
+ *  2-4 m per fix, so comparing against the newest fix alone made a standing person flip between "still" and
+ *  "moving"); walking back, every fix must stay within `radius` of it. Someone already counted as standing gets a
+ *  wider radius (hysteresis), so only real walking clears the status. */
+function stillSince(hist: { t: number; at: Vec3 }[], now: number, radius: number): number {
+  const recent = hist.filter((h) => now - h.t <= 10_000);
+  if (!recent.length) return now;
+  const c: Vec3 = [0, 0, 0];
+  for (const h of recent) { c[0] += h.at[0]; c[1] += h.at[1]; c[2] += h.at[2]; }
+  c[0] /= recent.length; c[1] /= recent.length; c[2] /= recent.length;
   let since = now;
   for (let i = hist.length - 1; i >= 0; i--) {
     const p = hist[i].at;
-    if (Math.abs(p[1] - cur[1]) > 1 || Math.hypot(p[0] - cur[0], p[2] - cur[2]) > STILL_M) break;
+    if (Math.abs(p[1] - c[1]) > 1 || Math.hypot(p[0] - c[0], p[2] - c[2]) > radius) break;
     since = hist[i].t;
   }
   return since;
@@ -116,7 +126,7 @@ export function applyScan(scan: BandScan, now = Date.now()): Track {
       for (const [k, v] of tracks) if (v.seen < oldT) { oldT = v.seen; old = k; }
       if (old) tracks.delete(old);
     }
-    t = { uid, at: null, deck: null, acc: null, pendingDeck: null, seen: now, fixAt: 0, hist: [], stillSince: now, bat: null, sos: false, ackedAlarm: null, alarmZone: null };
+    t = { uid, at: null, deck: null, acc: null, pendingDeck: null, seen: now, fixAt: 0, hist: [], stillSince: now, bat: null, sos: false, ackedAlarm: null, alarmZone: null, safeIn: null };
     tracks.set(uid, t);
   }
   t.seen = now;
@@ -141,9 +151,11 @@ export function applyScan(scan: BandScan, now = Date.now()): Track {
     t.fixAt = now;
     t.hist.push({ t: now, at: t.at });
     while (t.hist.length && now - t.hist[0].t > 120_000) t.hist.shift();
-    t.stillSince = stillSince(t.hist, t.at, now);
+    const standing = now - t.stillSince > 20_000;
+    t.stillSince = stillSince(t.hist, now, standing ? STILL_M * 1.6 : STILL_M);
   }
   if (alarm && t.at && (!t.alarmZone || t.alarmZone.alarmId !== alarm.id)) t.alarmZone = { alarmId: alarm.id, zone: zoneAt(t.at) };
+  if (alarm && t.at) { const z = zoneAt(t.at); if (z === 'muster-a' || z === 'muster-b') t.safeIn = alarm.id; }
   return t;
 }
 
@@ -154,6 +166,11 @@ export function replyFor(t: Track): BandReply {
   return { ok: true, alarm: { id: a.id, kind: a.kind, drill: a.drill, muster: stationFor(zone, a.blocked, t.at), acked: t.ackedAlarm === a.id }, next: 1 };
 }
 
+/** distance (m, horizontal) to the nearest muster station centre (boat deck, z -40 and 0) */
+function nearMuster(p: Vec3): number {
+  return Math.min(Math.hypot(Math.max(0, Math.abs(p[0]) - 12), p[2] + 40), Math.hypot(Math.max(0, Math.abs(p[0]) - 12), p[2]));
+}
+
 // ---------- state for the map ----------
 function statusOf(t: Track, now: number, alarmOn: boolean, alarmAt: number): BandStatus {
   if (now - t.seen > LOST_S * 1000) return 'lost';
@@ -161,6 +178,8 @@ function statusOf(t: Track, now: number, alarmOn: boolean, alarmAt: number): Ban
   if (!alarmOn) return 'ok';
   const z = t.at ? zoneAt(t.at) : null;
   if (z === 'muster-a' || z === 'muster-b') return 'safe';
+  // reached the muster station in this alarm and still on the boat deck close to it: noise, not leaving
+  if (t.safeIn && t.safeIn === activeAlarm()?.id && t.at && t.deck === 'd5' && nearMuster(t.at) < 10) return 'safe';
   if (!t.at || now - t.fixAt > FRESH_S * 1000) return 'lost';
   // "still" only counts time inside this alarm
   if (now - Math.max(t.stillSince, alarmAt) > STILL_S * 1000) return 'still';
