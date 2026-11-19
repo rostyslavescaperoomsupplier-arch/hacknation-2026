@@ -10,8 +10,10 @@
  *   -> call:accept | call:reject | call:cancel | call:hangup { to }
  *   -> rtc:offer | rtc:answer { to, sdp } | rtc:ice { to, candidate }
  *   <- error { code, message }
- * Abuse limits: Origin check (guard.ts), connections per IP, peers per room, number of rooms, message size,
- * per-connection token bucket for all messages and a stricter one for call invitations.
+ * Abuse limits: Origin check (guard.ts), connections per IP, peers per room, number of rooms (global and created
+ * per IP), message size, per-connection token bucket for every frame (junk included) and a stricter one for call
+ * invitations. A display name / terminal code is unique in a room ('name-taken' / 'terminal-taken'). Empty rooms are
+ * removed at once; rooms with no traffic and no call for 30 min are closed (clients reconnect and re-create them).
  *
  * HACKATHON DEMO ONLY. A room code is not authentication. For use on an actual
  * vessel add crew authentication, TLS, authorization, monitoring, and audit controls.
@@ -25,6 +27,7 @@ type Side = 'caller' | 'callee';
 type Media = 'audio' | 'video';
 type Call = { with: string; side: Side; accepted: boolean };
 type Bucket = { tokens: number; last: number };
+type Room = { members: Set<Peer>; creatorIp: string; lastActive: number };
 type Peer = {
   id: string;
   socket: Socket;
@@ -58,6 +61,10 @@ const MAX_CONNECTIONS = envNum('CREW_VIDEO_MAX_CONNECTIONS', 100);
 const MAX_PER_IP = envNum('CREW_VIDEO_MAX_PER_IP', 20);
 const MAX_ROOMS = envNum('CREW_VIDEO_MAX_ROOMS', 32);
 const MAX_ROOM_PEERS = envNum('CREW_VIDEO_MAX_ROOM_PEERS', 40);
+/** rooms one IP may have created (and that still exist): one attacker cannot use up MAX_ROOMS */
+const MAX_ROOMS_PER_IP = envNum('CREW_VIDEO_MAX_ROOMS_PER_IP', 4);
+/** a room with no message and no call for this long is closed */
+const ROOM_IDLE_MS = envNum('CREW_VIDEO_ROOM_IDLE_SEC', 30 * 60) * 1000;
 /** all messages: burst of 60, 20 per second sustained (ICE candidates come in bursts) */
 const MSG_RATE = { cap: envNum('CREW_VIDEO_MSG_BURST', 60), perSec: 20 };
 /** call invitations: 6 in a burst, then one per 5 s (stops ring spam) */
@@ -73,7 +80,7 @@ const PLACE_RE = /^[A-Z0-9][A-Z0-9_-]{0,11}$/;
 // control characters, zero-width and bidi overrides: not allowed in a display name
 const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
 const peers = new Map<string, Peer>();
-const rooms = new Map<string, Set<Peer>>();
+const rooms = new Map<string, Room>();
 
 /** Write one unfragmented server-to-browser WebSocket frame. */
 function frame(opcode: number, data: Buffer): Buffer {
@@ -109,6 +116,10 @@ function take(b: Bucket, rate: { cap: number; perSec: number }, now = Date.now()
 function cleanName(v: unknown): string {
   return typeof v === 'string' ? v.normalize('NFC').replace(UNSAFE_CHARS, '').replace(/\s+/g, ' ').trim() : '';
 }
+/** Comparison key for display names: no case, compatibility forms folded ("KAPITAN" = "kapitan" = fullwidth). */
+function nameKey(name: string): string {
+  return name.normalize('NFKC').replace(UNSAFE_CHARS, '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('pl');
+}
 function cleanCode(v: unknown, re: RegExp): string {
   if (typeof v !== 'string') return '';
   const code = v.trim().toUpperCase();
@@ -135,10 +146,10 @@ function endCall(peer: Peer, messageType: 'call:reject' | 'call:cancel' | 'call:
   if (peers.has(peer.id)) status(peer);
 }
 function roomPeers(room: string) {
-  return [...(rooms.get(room) ?? [])].map(info);
+  return [...(rooms.get(room)?.members ?? [])].map(info);
 }
 function broadcast(room: string, data: object, exclude?: string) {
-  for (const peer of rooms.get(room) ?? []) if (peer.id !== exclude) send(peer, data);
+  for (const peer of rooms.get(room)?.members ?? []) if (peer.id !== exclude) send(peer, data);
 }
 function leave(peer: Peer) {
   clearTimeout(peer.joinedTimeout);
@@ -146,8 +157,8 @@ function leave(peer: Peer) {
   if (peer.call) endCall(peer, 'call:hangup');
   if (!peer.joined) return;
   const room = rooms.get(peer.room);
-  room?.delete(peer);
-  if (room?.size === 0) rooms.delete(peer.room);
+  room?.members.delete(peer);
+  if (room?.members.size === 0) rooms.delete(peer.room); // empty rooms go at once
   broadcast(peer.room, { type: 'peer:left', id: peer.id });
 }
 /** `code` is stable (the client translates it), `message` is the English fallback. */
@@ -157,35 +168,57 @@ function targetInRoom(peer: Peer, id: unknown): Peer | undefined {
   const target = peers.get(id);
   return target?.joined && target.room === peer.room ? target : undefined;
 }
+/** Every incoming text frame (valid, unknown type or invalid JSON) pays one token; false = dropped. */
+function admit(peer: Peer): boolean {
+  if (take(peer.msgBucket, MSG_RATE)) return true;
+  if (++peer.strikes > MAX_STRIKES) close(peer, 1008);
+  else error(peer, 'rate', 'Too many messages, slow down.');
+  return false;
+}
 function handle(peer: Peer, data: Payload) {
   if (typeof data.type !== 'string' || !TYPES.has(data.type)) return error(peer, 'unknown', 'Unknown command.');
-  if (!take(peer.msgBucket, MSG_RATE)) {
-    if (++peer.strikes > MAX_STRIKES) return close(peer, 1008);
-    return error(peer, 'rate', 'Too many messages, slow down.');
-  }
   if (data.type === 'join') {
     if (peer.joined) return error(peer, 'joined', 'Already joined.');
     const name = cleanName(data.name);
     const room = typeof data.room === 'string' ? data.room.trim().toUpperCase() : '';
     if ([...name].length < 2 || [...name].length > 40 || !ROOM_RE.test(room))
       return error(peer, 'invalid', 'Use a name of 2-40 characters and a room code of 3-24 letters/numbers.');
-    const members = rooms.get(room) ?? new Set<Peer>();
-    if (!rooms.has(room) && rooms.size >= MAX_ROOMS) return error(peer, 'rooms-full', 'Too many channels on this server.');
-    if (members.size >= MAX_ROOM_PEERS) return error(peer, 'full', 'This channel is full.');
+    const terminal = cleanCode(data.terminal, TERMINAL_RE);
+    const place = cleanCode(data.place, PLACE_RE);
+    let entry = rooms.get(room);
+    if (!entry) {
+      if (rooms.size >= MAX_ROOMS) return error(peer, 'rooms-full', 'Too many channels on this server.');
+      let own = 0;
+      for (const r of rooms.values()) if (r.creatorIp === peer.ip) own++;
+      if (own >= MAX_ROOMS_PER_IP) return error(peer, 'rooms-ip', 'Too many channels opened from this address.');
+    } else {
+      if (entry.members.size >= MAX_ROOM_PEERS) return error(peer, 'full', 'This channel is full.');
+      const key = nameKey(name);
+      for (const p of entry.members) {
+        if (terminal && p.terminal === terminal) return error(peer, 'terminal-taken', 'This terminal is already online in this channel.');
+        // two terminals of one room (T-D4-01-A / -B) both carry the room name: distinct codes, same place
+        const sameRoomTerminals = terminal && p.terminal && place && p.place === place;
+        if (nameKey(p.name) === key && !sameRoomTerminals)
+          return error(peer, 'name-taken', 'This name is already used in this channel.');
+      }
+    }
     peer.name = name;
     peer.room = room;
-    peer.terminal = cleanCode(data.terminal, TERMINAL_RE);
-    peer.place = cleanCode(data.place, PLACE_RE);
+    peer.terminal = terminal;
+    peer.place = place;
     peer.joined = true;
     clearTimeout(peer.joinedTimeout);
     const existing = roomPeers(room);
-    members.add(peer);
-    rooms.set(room, members);
+    if (!entry) rooms.set(room, entry = { members: new Set(), creatorIp: peer.ip, lastActive: Date.now() });
+    entry.members.add(peer);
+    entry.lastActive = Date.now();
     send(peer, { type: 'welcome', id: peer.id, room, peers: existing });
     broadcast(room, { type: 'peer:joined', peer: info(peer) }, peer.id);
     return;
   }
   if (!peer.joined) return error(peer, 'not-joined', 'Join a channel first.');
+  const entry = rooms.get(peer.room);
+  if (entry) entry.lastActive = Date.now();
 
   if (data.type === 'call:invite') {
     if (!take(peer.inviteBucket, INVITE_RATE)) return error(peer, 'rate', 'Too many calls, wait a moment.');
@@ -247,6 +280,7 @@ function handle(peer: Peer, data: Payload) {
 }
 
 function processText(peer: Peer, bytes: Buffer) {
+  if (!admit(peer)) return; // before decoding: junk counts against the limit like any other message
   let raw: string;
   try { raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch { return close(peer, 1007); }
@@ -308,6 +342,19 @@ function read(peer: Peer, data: Buffer) {
   }
 }
 
+/** Close rooms with no message for ROOM_IDLE_MS and nobody in a call. Exported for tests. */
+export function sweepIdleRooms(now = Date.now()) {
+  for (const [code, room] of rooms) {
+    if (now - room.lastActive < ROOM_IDLE_MS) continue;
+    if ([...room.members].some(p => p.call)) continue;
+    rooms.delete(code);
+    for (const p of room.members) {
+      p.joined = false; // leave() must not touch the (possibly re-created) room again
+      close(p, 4000);
+    }
+  }
+}
+
 export function attachCrewVideoWebSocket(server: Server) {
   server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
     let path = '';
@@ -354,6 +401,7 @@ export function attachCrewVideoWebSocket(server: Server) {
       peer.alive = false;
       if (peer.socket.writable) peer.socket.write(frame(9, Buffer.alloc(0)));
     }
+    sweepIdleRooms();
   }, 30_000);
   heartbeat.unref();
   server.on('close', () => clearInterval(heartbeat));

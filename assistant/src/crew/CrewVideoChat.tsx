@@ -74,6 +74,9 @@ const PL = {
     offline: 'Ten terminal jest już offline.', 'in-call': 'Trwa już inna rozmowa.', rate: 'Za dużo prób. Odczekaj chwilę.',
     invalid: 'Nazwa: 2 do 40 znaków. Kanał: 3 do 24 znaków (A-Z, 0-9, - lub _).', full: 'Kanał jest pełny.',
     'rooms-full': 'Serwer ma za dużo kanałów.',
+    'rooms-ip': 'Z tego adresu otwarto już za dużo kanałów. Wybierz istniejący kanał.',
+    'name-taken': 'Ta nazwa jest już zajęta na tym kanale. Wybierz inną nazwę.',
+    'terminal-taken': 'Ten terminal jest już połączony na tym kanale. Wybierz inny terminal lub wpisz nazwę.',
   } as Record<string, string>,
   signalling: 'Błąd sygnalizacji połączenia.',
 };
@@ -113,6 +116,9 @@ const EN: Strings = {
     offline: 'That terminal is offline now.', 'in-call': 'Another call is in progress.', rate: 'Too many attempts. Wait a moment.',
     invalid: 'Name: 2 to 40 characters. Channel: 3 to 24 characters (A-Z, 0-9, - or _).', full: 'The channel is full.',
     'rooms-full': 'The server has too many channels.',
+    'rooms-ip': 'Too many channels were opened from this address. Pick an existing channel.',
+    'name-taken': 'This name is already used in this channel. Pick another name.',
+    'terminal-taken': 'This terminal is already connected to this channel. Pick another terminal or type a name.',
   },
   signalling: 'Call signalling error.',
 };
@@ -456,8 +462,13 @@ export default function CrewVideoChat({ lang, onOpen }: { lang: Lang; onOpen?: (
         break;
       case 'error': {
         const text = (event.code && tt.codes[event.code]) || tt.signalling;
-        if (phaseRef.current === 'connecting') {
-          // the server refused the join (name, channel full ...): back to the terminal form
+        if (phaseRef.current === 'connecting' && retryCountRef.current > 0 &&
+            (event.code === 'name-taken' || event.code === 'terminal-taken')) {
+          // automatic reconnect: the server may still hold our previous, dropped socket until its heartbeat
+          // times out, so this is our own name. Close and let the backoff retry instead of opening the form.
+          socketRef.current?.close();
+        } else if (phaseRef.current === 'connecting') {
+          // the server refused the join (name taken, channel full ...): back to the terminal form
           stopSocket();
           setEditing(true);
         } else if (phaseRef.current === 'dialing' && event.code !== 'rate') {

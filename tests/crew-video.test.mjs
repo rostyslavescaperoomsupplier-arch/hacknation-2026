@@ -1,9 +1,10 @@
 import { createServer, request } from 'node:http';
 import assert from 'node:assert/strict';
 // small caps so the limits can be exercised quickly (read once when the module loads)
-process.env.CREW_VIDEO_MAX_ROOMS = '3';
+process.env.CREW_VIDEO_MAX_ROOMS = '4';
+process.env.CREW_VIDEO_MAX_ROOMS_PER_IP = '3';
 process.env.CREW_VIDEO_MAX_PER_IP = '14';
-const { attachCrewVideoWebSocket } = await import('../assistant/server/crew-video.ts');
+const { attachCrewVideoWebSocket, sweepIdleRooms } = await import('../assistant/server/crew-video.ts');
 
 const http = createServer((_req, res) => res.end('ok'));
 attachCrewVideoWebSocket(http);
@@ -25,8 +26,9 @@ function upgradeStatus(origin) {
     req.end();
   });
 }
-function connect() {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/crew-video-ws`);
+/** `ip` is sent as X-Forwarded-For (trusted from loopback) so a test can act as another client address. */
+function connect(ip) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/crew-video-ws`, ip ? { headers: { 'x-forwarded-for': ip } } : undefined);
   clients.push(ws);
   const events = [];
   const callbacks = [];
@@ -180,13 +182,52 @@ try {
   big.ws.send(JSON.stringify({ type: 'join', name: 'x'.repeat(40_000), room: 'SHIP-01' }));
   assert.equal(await bigClosed, 1009);
 
-  // channel cap: SHIP-01 and SHIP-02 exist, one more fits, the next is refused
-  const r3 = connect(), r4 = connect();
-  await Promise.all([r3.ready, r4.ready]);
+  // unique identity in a room: name (no case, NFKC) and terminal code; two terminals of one room may share its name
+  const dup = connect('10.0.1.1');
+  await dup.ready;
+  dup.send('join', { name: '  aLiCe ', room: 'ship-01' });
+  await dup.wait('error', e => e.code === 'name-taken');
+  dup.send('join', { name: '\uff21lice', room: 'SHIP-01' }); // fullwidth A
+  await dup.wait('error', e => e.code === 'name-taken' && dup.events.filter(x => x.code === 'name-taken').length === 2);
+  dup.send('join', { name: 'Ktoś inny', room: 'SHIP-01', terminal: 'T-D4-01-A', place: 'D4-01' });
+  await dup.wait('error', e => e.code === 'terminal-taken');
+  dup.send('join', { name: 'Mostek nawigacyjny', room: 'SHIP-01' }); // free text may not copy a terminal's name
+  await dup.wait('error', e => e.code === 'name-taken' && dup.events.filter(x => x.code === 'name-taken').length === 3);
+  dup.send('join', { name: 'Mostek nawigacyjny', room: 'SHIP-01', terminal: 'T-D4-01-B', place: 'D4-01' });
+  const dupW = await dup.wait('welcome');
+  assert.equal(dupW.room, 'SHIP-01');
+  const alice2 = connect('10.0.1.2'); // the same name is fine in another channel
+  await alice2.ready;
+  alice2.send('join', { name: 'Alice', room: 'SHIP-02' });
+  await alice2.wait('welcome');
+
+  // junk (invalid JSON, unknown types) pays the message bucket too: a flood ends with 1008
+  const junkFlood = connect('10.0.1.3');
+  await junkFlood.ready;
+  const junkClosed = new Promise(resolve => junkFlood.ws.addEventListener('close', e => resolve(e.code), { once: true }));
+  for (let i = 0; i < 300; i++) junkFlood.ws.send(i % 2 ? '{bad' : JSON.stringify({ type: 'nope' }));
+  assert.equal(await junkClosed, 1008);
+  assert.ok(junkFlood.events.some(e => e.code === 'rate'));
+  assert.ok(junkFlood.events.filter(e => e.type === 'error').length < 300);
+
+  // channel caps: 127.0.0.1 opened SHIP-01 and SHIP-02, one more fits, the 4th is over its per-IP quota (3);
+  // another address takes the last global slot (4), a third address gets rooms-full
+  const r3 = connect(), r4 = connect(), other = connect('10.0.2.1'), late = connect('10.0.2.2');
+  await Promise.all([r3.ready, r4.ready, other.ready, late.ready]);
   r3.send('join', { name: 'Room three', room: 'SHIP-03' });
   await r3.wait('welcome');
   r4.send('join', { name: 'Room four', room: 'SHIP-04' });
-  await r4.wait('error', e => e.code === 'rooms-full');
+  await r4.wait('error', e => e.code === 'rooms-ip');
+  other.send('join', { name: 'Other', room: 'SHIP-04' });
+  await other.wait('welcome');
+  late.send('join', { name: 'Late', room: 'SHIP-05' });
+  await late.wait('error', e => e.code === 'rooms-full');
+  // an empty room is removed at once: when Other leaves, SHIP-04's slot is free again
+  other.ws.close();
+  await new Promise(resolve => other.ws.addEventListener('close', resolve, { once: true }));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  late.send('join', { name: 'Late', room: 'SHIP-05' });
+  await late.wait('welcome');
 
   // connections per IP: further upgrades get 503 once the cap is reached
   const extra = [];
@@ -197,7 +238,24 @@ try {
     await c.ready.catch(() => { refused++; });
   }
   assert.equal(refused, 1);
-  console.log('PASS: origin check, terminal identity, name sanitising, unknown/invalid messages, media type, busy status, invite + message rate limits, size limit, channel cap, per-IP cap');
+
+  // idle rooms (no message, no call for 30 min) are closed; a room with a call in progress is kept
+  const idleA = connect('10.0.3.1'), idleB = connect('10.0.3.2');
+  await Promise.all([idleA.ready, idleB.ready]);
+  for (const p of extra) try { p.ws.close(); } catch { /* ignore */ }
+  await new Promise(resolve => setTimeout(resolve, 200));
+  idleA.send('join', { name: 'Idle A', room: 'SHIP-01' });
+  const ia = await idleA.wait('welcome');
+  idleB.send('join', { name: 'Idle B', room: 'SHIP-01' });
+  const ib = await idleB.wait('welcome');
+  idleA.send('call:invite', { to: ib.id });
+  await idleB.wait('call:invite', x => x.from === ia.id);
+  const r3Closed = new Promise(resolve => r3.ws.addEventListener('close', e => resolve(e.code), { once: true }));
+  sweepIdleRooms(Date.now() + 31 * 60_000);
+  assert.equal(await r3Closed, 4000); // SHIP-03: nobody in a call
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(idleA.ws.readyState, WebSocket.OPEN); // SHIP-01: call ringing, kept
+  console.log('PASS: origin check, terminal identity, name sanitising, unique name/terminal per room, unknown/invalid messages, junk flood limit, media type, busy status, invite + message rate limits, size limit, channel caps (global, per IP), empty-room removal, per-IP cap, idle-room expiry');
 } catch (e) {
   process.exitCode = 1;
   console.error(e);
