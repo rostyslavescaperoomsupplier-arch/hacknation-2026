@@ -1,0 +1,62 @@
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VideoChat - Rozmowy online</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <main class="container">
+
+        <div class="logo">
+            <span>📹</span>
+            VideoChat
+        </div>
+
+        <h1>Połącz się z innymi</h1>
+
+        <p class="subtitle">
+            Twórz pokoje i rozmawiaj ze znajomymi
+            przez internet.
+        </p>
+
+        <div class="panel">
+
+            <label>Twoje imię</label>
+            <input
+                type="text"
+                id="username"
+                placeholder="Wpisz swoje imię"
+                maxlength="40"
+            >
+
+            <label>Nazwa pokoju</label>
+            <input
+                type="text"
+                id="room"
+                placeholder="np. spotkanie123"
+                maxlength="50"
+            >
+
+            <button onclick="joinRoom()">
+                Dołącz do rozmowy
+            </button>
+
+            <p id="message"></p>
+
+        </div>
+
+        <footer>
+            VideoChat © 2026
+        </footer>
+
+    </main>
+
+    <script src="app.js"></script>
+
+</body>
+</html>
+
