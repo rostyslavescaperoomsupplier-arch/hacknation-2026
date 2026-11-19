@@ -55,6 +55,34 @@ Cel: jeden spójny scenariusz, który pokazuje wszystko naraz.
 - **Języki załogi**: polski, angielski, ukraiński, tagalog (TTS i interfejs).
 - **Powiadomienia push i dźwięk na telefonach załogi** (PWA), także z zablokowanym ekranem.
 
+## 3a. Smart opaski załogi (RFID + czujniki)
+
+Baza załogi już przewiduje opaskę jako identyfikator (`crew.rfid_type = 'opaska'`). Docelowo opaska to więcej niż tag:
+
+| Element | Do czego |
+|---|---|
+| Tag RFID/NFC (UID) | odbicie przy terminalach, drzwiach i stacjach zbiórki, logowanie do terminala bez karty |
+| BLE (beacon) | pozycja między czytnikami: w której strefie jest osoba, także na pokładzie otwartym |
+| Silnik wibracyjny + dioda | alarm odczuwalny w hałasie maszynowni i przez sen: inny wzór wibracji dla alarmu ogólnego, pożaru, MOB; potwierdzenie przyciskiem na opasce |
+| Akcelerometr | wykrycie upadku i bezruchu (praca w pojedynkę), liczenie aktywności |
+| Czujnik zanurzenia + utrata sygnału BLE | automatyczny alarm „człowiek za burtą” z ostatnią pozycją |
+| Tętno (PPG), SpO2, temperatura skóry | stan osoby: stres cieplny w maszynowni, zmęczenie, nagły problem zdrowotny |
+| Bateria | stan widoczny na mostku, przypomnienie o ładowaniu na terminalu |
+
+Jak działa w alarmie:
+1. Mostek ogłasza alarm → wszystkie opaski wibrują wzorem tego alarmu, dioda pokazuje kolor.
+2. Osoba potwierdza przyciskiem; terminal i asystent pokazują jej drogę ewakuacji.
+3. Przy stacji zbiórki opaska jest odczytywana automatycznie → rozliczenie zbiórki rośnie bez ręcznego liczenia.
+4. Mostek widzi: kto nie potwierdził, ostatnią strefę każdej brakującej osoby, alerty zdrowotne (upadek, bezruch, tętno).
+
+Statystyki (zbiorczo, bez surowych danych medycznych dla przełożonych): czas reakcji na alarmy, obciążenie cieplne na wachcie w maszynowni, godziny pracy i odpoczynku (MLC 2006), aktywność i sen.
+
+Warunki:
+- **RODO art. 9**: tętno, SpO2 i temperatura to dane o zdrowiu. Podstawa: ochrona żywotnych interesów w alarmie, poza tym dobrowolna zgoda; na mostek trafiają tylko alerty, nie surowe pomiary; krótka retencja; DPIA.
+- **Sprzęt**: wodoszczelność IP68, odporność na sól, w strefach zagrożonych wybuchem wersja ATEX; ładowanie bez kontaktów.
+- **Łączność**: bramki BLE w strefach (te same co terminale), działanie bez internetu na statku.
+- **Prototyp na hackathon**: opaska z tagiem RFID (odbicia już działają w bazie) + ESP32 z silnikiem wibracyjnym i BLE, sterowany przez ten sam system alarmowy.
+
 ## 4. Platforma (warunek wdrożenia na prawdziwy statek)
 
 - **Prawdziwe uwierzytelnianie terminali i osób**: karta RFID + PIN, role (mostek, oficer, załoga), log audytu. Dziś rola terminala jest deklaratywna, a lokalizacja załogi jest widoczna bez logowania (patrz `docs/ADVERSARIAL-REPORT.md`).

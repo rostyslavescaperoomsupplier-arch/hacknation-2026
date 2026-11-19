@@ -62,3 +62,7 @@ albo u oficera wachtowego.
 - Gdy w rejsie ponad 25% załogi nie brało udziału w ćwiczeniach na tym statku w ostatnim miesiącu, ćwiczenie przed wyjściem lub
   zaraz po wyjściu w morze.
 - Ćwiczenia człowiek za burtą, przeciekowe, rozlewu oleju i inne według planu ćwiczeń w SMS.
+
+
+## Smart opaski załogi (koncepcja, w budowie)
+Załoga może nosić opaskę z tagiem RFID zamiast karty: odbicie przy terminalach i stacjach zbiórki. Docelowo opaska ma też BLE (strefa, w której jest osoba), silnik wibracyjny (alarm wyczuwalny w hałasie i przez sen, wzór zależny od rodzaju alarmu, potwierdzenie przyciskiem), akcelerometr (upadek, bezruch przy pracy w pojedynkę), czujnik zanurzenia (automatyczny alarm człowiek za burtą) oraz pomiar tętna, SpO2 i temperatury skóry (stres cieplny, zmęczenie). Na mostek trafiają tylko alerty, nie surowe dane medyczne (RODO art. 9). Na dziś działa tylko identyfikacja RFID opaski; wibracje i czujniki to plan.
