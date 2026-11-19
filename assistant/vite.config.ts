@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: { dedupe: ['react', 'react-dom', 'three'] },
   server: {
     fs: { allow: ['..'] },
-    proxy: { '/api': 'http://localhost:8787' },
+    // ASSISTANT_API=https://jantar.byst.re npx vite  -> use the shared server (no local API key needed)
+    proxy: { '/api': { target: process.env.ASSISTANT_API || 'http://localhost:8787', changeOrigin: true, ws: true } },
   },
 });

@@ -20,7 +20,7 @@ npm run dev                 # serwer :8787 + front http://localhost:5173
 
 Produkcja: `npm run build && npm start` (jeden proces, port 8787, serwuje też front).
 
-**Serwer demo:** https://jantar.byst.re (VPS Mikrus, systemd `jantar-assistant`, port 3003 za nginx). Wdrożenie: `assistant/deploy/deploy.sh`, klucz API tylko na serwerze: `assistant/deploy/set-key.sh`.
+**Serwer demo:** https://jantar.byst.re (VPS Mikrus, systemd `jantar-assistant`, port 3003 za nginx). Lokalnie bez klucza: `cd assistant && ASSISTANT_API=https://jantar.byst.re npx vite` (czat idzie na wspólny serwer). Wdrożenie: `assistant/deploy/deploy.sh`, klucz API tylko na serwerze: `assistant/deploy/set-key.sh`.
 
 Wiedzę asystentki (np. opis wybranego zadania) wpisuje się w `assistant/server/knowledge.md`. Kontakt pokazywany, gdy Mewka nie zna odpowiedzi: `assistant/src/i18n.ts` (`CONTACT`).
 
