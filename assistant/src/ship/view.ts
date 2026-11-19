@@ -40,7 +40,8 @@ export interface RouteDraw {
 
 interface Loaded { root: Group; groups: Map<string, Mesh[]>; boxes: Map<string, Box3>; box: Box3 }
 
-type Kind = 'hl' | 'ghost' | 'ghost2' | 'zone';
+type Kind = 'hl' | 'ghost' | 'ghost2' | 'zone' | 'crit' | 'warn';
+export type AlertLevel = 'critical' | 'warning';
 const GHOST_KEEP = new Set(['Lifeboats', 'Liferafts']);
 const GHOST_STRONG = new Set(['Stairwell -29', 'Stairwell 22', 'Engineering stairs', 'Bridge stairs', 'Engine 1', 'Engine 2', 'Engine 3', 'Engine 4']);
 const ROUTE_LIFT = 0.9;
@@ -68,6 +69,9 @@ export class ShipView {
   private hover: string | null = null;
   private selected: string | null = null;
   private zoneGroups = new Set<string>();
+  private alertGroups = new Map<string, AlertLevel>();
+  private anchorLayer: HTMLElement | null = null;
+  private anchorFilter: ((at: Vector3) => boolean) | null = null;
   private routeGroup = new Group();
   private arrows: InstancedMesh | null = null;
   private routePts: Vector3[] = [];
@@ -233,7 +237,10 @@ export class ShipView {
     if (m) return m;
     m = orig.clone();
     const std = m as MeshStandardMaterial;
-    if (kind === 'hl' || kind === 'zone') {
+    if (kind === 'crit' || kind === 'warn') {
+      if (std.emissive) { std.emissive = kind === 'crit' ? cssColor('--c-danger', '#c62828') : cssColor('--c-gold', '#e8590c'); std.emissiveIntensity = kind === 'crit' ? 0.6 : 0.4; }
+      if (std.color) std.color = std.color.clone().lerp(kind === 'crit' ? cssColor('--c-danger', '#c62828') : cssColor('--c-gold', '#e8590c'), 0.35);
+    } else if (kind === 'hl' || kind === 'zone') {
       if (std.emissive) { std.emissive = cssColor('--c-gold', '#e8590c'); std.emissiveIntensity = kind === 'hl' ? 0.55 : 0.45; }
       if (kind === 'zone' && this.ghost) { m.transparent = true; m.opacity = 0.55; m.depthWrite = false; }
     } else {
@@ -256,6 +263,7 @@ export class ShipView {
         else if (GHOST_STRONG.has(g)) kind = 'ghost2';
         else kind = 'ghost';
       } else if (g === this.hover || g === this.selected || this.zoneGroups.has(g)) kind = 'hl';
+      else if (this.alertGroups.has(g)) kind = this.alertGroups.get(g) === 'critical' ? 'crit' : 'warn';
       for (const mesh of meshes) {
         const orig = mesh.userData.orig as Material | Material[];
         if (!kind) { mesh.material = orig; continue; }
@@ -278,6 +286,25 @@ export class ShipView {
 
   /** model mode: highlight a set of groups (a zone) */
   setZoneGroups(groups: string[]) { this.zoneGroups = new Set(groups); this.applyMaterials(); }
+
+  /** model mode: tint groups with crew safety alerts (hover / selection / zone highlight win) */
+  setAlertGroups(m: Map<string, AlertLevel>) {
+    const same = m.size === this.alertGroups.size && [...m].every(([k, v]) => this.alertGroups.get(k) === v);
+    if (same) return;
+    this.alertGroups = new Map(m);
+    this.applyMaterials();
+  }
+
+  /** HTML elements inside `layer` with data-at="x,y,z" are kept on their projected 3D point (screen-space markers).
+   *  data-anchor="bottom" puts the point under the element (badges), otherwise centred; data-nudge="1" elements avoid
+   *  overlapping each other. `filter` hides points (e.g. outside the loaded cutaway model). */
+  setAnchorLayer(layer: HTMLElement | null, filter: ((at: Vector3) => boolean) | null = null) {
+    this.anchorLayer = layer;
+    this.anchorFilter = filter;
+    this.dirty = true;
+  }
+  /** call after the markers in the layer changed */
+  refreshAnchors() { this.dirty = true; }
 
   frameBox(b: Box) {
     const box = new Box3(new Vector3(...b.min), new Vector3(...b.max)).expandByScalar(4);
@@ -478,7 +505,48 @@ export class ShipView {
     this.dirty = false;
     this.renderer.render(this.scene, this.camera);
     this.placeLabels();
+    this.placeAnchors();
   };
+
+  private anchorPos = new WeakMap<Element, { src: string; v: Vector3 }>();
+  private placeAnchors() {
+    const layer = this.anchorLayer;
+    if (!layer) return;
+    const w = this.host.clientWidth, h = this.host.clientHeight, v = new Vector3();
+    const placed: { x: number; y: number; w: number; h: number }[] = [];
+    const items = layer.querySelectorAll<HTMLElement>('[data-at]');
+    const nudge: { el: HTMLElement; x: number; y: number; w: number; h: number }[] = [];
+    for (const el of items) {
+      const src = el.dataset.at ?? '';
+      let c = this.anchorPos.get(el);
+      if (!c || c.src !== src) {
+        const [x, y, z] = src.split(',').map(Number);
+        c = { src, v: new Vector3(x, y, z) };
+        this.anchorPos.set(el, c);
+      }
+      v.copy(c.v).project(this.camera);
+      const off = v.z > 1 || v.z < -1 || Math.abs(v.x) > 1.15 || Math.abs(v.y) > 1.15 || (this.anchorFilter ? !this.anchorFilter(c.v) : false);
+      if (off) { el.style.visibility = 'hidden'; continue; }
+      el.style.visibility = '';
+      const ew = el.offsetWidth, eh = el.offsetHeight;
+      const x = ((v.x + 1) / 2) * w - ew / 2;
+      const y = ((1 - v.y) / 2) * h - (el.dataset.anchor === 'bottom' ? eh : eh / 2);
+      if (el.dataset.nudge) nudge.push({ el, x, y, w: ew, h: eh });
+      else el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    }
+    // greedy: badges further down the screen first stay put, the others step up until free
+    nudge.sort((a, b) => b.y - a.y);
+    for (const n of nudge) {
+      let y = n.y;
+      for (let i = 0; i < 12; i++) {
+        const hit = placed.find((p) => n.x < p.x + p.w + 2 && n.x + n.w + 2 > p.x && y < p.y + p.h + 2 && y + n.h + 2 > p.y);
+        if (!hit) break;
+        y = hit.y - n.h - 3;
+      }
+      placed.push({ x: n.x, y, w: n.w, h: n.h });
+      n.el.style.transform = `translate(${Math.round(n.x)}px, ${Math.round(y)}px)`;
+    }
+  }
 
   private placeLabels() {
     if (!this.labels.length) return;

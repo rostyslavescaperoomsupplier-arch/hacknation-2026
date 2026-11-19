@@ -5,8 +5,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Lang } from '../types';
 import { L, MUSTER, STAIRS, ZONE, ZONES, fmtTime, route, tr, type Stair, type ZoneId } from './routes';
-import { ShipView, type ModelKey } from './view';
+import { ShipView, type AlertLevel, type ModelKey } from './view';
 import { deckOf, roomName, zoneOfGroup } from './names';
+import { crewZoneName, useCrewData, useRouteZones } from './crew';
+import { CrewDetail, CrewLegend, CrewList, CrewMarkers, EvacCrew, type CrewSel } from './CrewLayer';
 
 export interface ShipPanelProps {
   lang: Lang;
@@ -61,8 +63,23 @@ function Segmented<T extends string>({ label, value, options, onChange, tone = '
   );
 }
 
+/** the panel stays mounted under `hidden` when another tab is open: poll only while it is on screen */
+function useOnScreen(ref: React.RefObject<HTMLElement | null>): boolean {
+  const [on, setOn] = useState(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((e) => setOn(e.some((x) => x.isIntersecting)));
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+  return on;
+}
+
 export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPanelProps) {
+  const rootRef = useRef<HTMLElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const markerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<ShipView | null>(null);
   const reduced = useReducedMotion();
   const descId = useId();
@@ -86,6 +103,19 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
 
   const r = useMemo(() => route(evZone, evBlocked), [evZone, evBlocked]);
 
+  // ---- crew layer ----
+  const onScreen = useOnScreen(rootRef);
+  const [crewOn, setCrewOn] = useState(true);
+  const [crewSel, setCrewSel] = useState<CrewSel | null>(null);
+  const [crewHl, setCrewHl] = useState('');
+  const crew = useCrewData(onScreen && (mode === 'evac' || crewOn));
+  const routeZones = useRouteZones(r.points, evZone);
+  const showCrew = mode === 'model' && crewOn;
+  const crewSelId = useId();
+  const crewSelLabel = !crewSel ? '' : crewSel.kind === 'room'
+    ? (crew.rooms.find((x) => x.code === crewSel.code)?.name ?? '')
+    : tr(lang, crewZoneName(crewSel.zone));
+
   // ---- three.js lifecycle ----
   useEffect(() => {
     const host = hostRef.current;
@@ -103,6 +133,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
       return;
     }
     viewRef.current = v;
+    v.setAnchorLayer(markerRef.current);
     return () => { v.dispose(); viewRef.current = null; };
     // reduced motion is pushed separately below; the view is created once
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,7 +144,24 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
   useEffect(() => {
     setError(null);
     void viewRef.current?.setModel(model);
+    // the engine-room cutaway has nothing above deck 1: hide markers that would float in the air
+    viewRef.current?.setAnchorLayer(markerRef.current, model === 'engine' ? (p) => p.y < 1 : null);
   }, [model, glFail]);
+
+  // crew markers moved / changed: re-place them; alert tint of the zones in model mode
+  useEffect(() => { viewRef.current?.refreshAnchors(); }, [crew, crewSel, crewHl, showCrew, lang]);
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    const m = new Map<string, AlertLevel>();
+    if (showCrew && crew.status === 'ok') {
+      for (const z of ZONES) {
+        const sev = crew.byZone[z.id]?.severity;
+        if (sev) for (const g of z.groups) m.set(g, sev);
+      }
+    }
+    v.setAlertGroups(m);
+  }, [crew, showCrew]);
 
   // mode / route
   useEffect(() => {
@@ -149,6 +197,12 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
     if (modelZone) { v.setSelected(null); v.setZoneGroups(ZONE[modelZone].groups); v.frameBox(ZONE[modelZone].box); }
     else v.setZoneGroups([]);
   }, [modelZone, mode]);
+
+  function pickCrew(s: CrewSel) {
+    setCrewSel(s);
+    // on narrow screens the side panel is below the canvas: bring it into view
+    requestAnimationFrame(() => document.getElementById(crewSelId)?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' }));
+  }
 
   function pickZone(z: ZoneId) {
     setEvZone(z);
@@ -189,7 +243,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
         'Interactive 3D model of the ferry. Drag to rotate, scroll or pinch to zoom. The zone list next to it works with the keyboard.');
 
   return (
-    <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]" aria-labelledby={`${descId}-t`}>
+    <section ref={rootRef} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]" aria-labelledby={`${descId}-t`}>
       <div className="min-w-0">
         <p className="tech-kicker">MF Jantar Unity</p>
         <h2 id={`${descId}-t`} className="tech-title mb-3 text-h2">
@@ -199,6 +253,13 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Segmented label={L(lang, 'Model', 'Model')} value={model} onChange={(v) => setModel(v as ModelKey)}
                      options={MODELS.map((m) => ({ value: m.key, label: L(lang, m.pl, m.en) }))} />
+          {mode === 'model' && (
+            <button type="button" aria-pressed={crewOn} onClick={() => { setCrewOn(!crewOn); setCrewSel(null); }}
+                    className={`tap inline-flex items-center gap-2 rounded-card border px-3 text-sm font-semibold ${crewOn ? 'border-gold bg-paper text-ink' : 'border-line bg-paper text-ink-2 hover:text-ink'}`}>
+              <span aria-hidden="true" className={`inline-block h-3 w-3 rounded-[2px] border-2 ${crewOn ? 'border-gold bg-gold' : 'border-line'}`} />
+              {L(lang, 'Warstwa: Załoga', 'Layer: Crew')}
+            </button>
+          )}
         </div>
 
         {mode === 'evac' && (
@@ -225,6 +286,8 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
         <div className="relative h-[60vh] min-h-[320px] w-full overflow-hidden rounded-card border border-line">
           <p id={descId} className="sr-only">{canvasDesc}</p>
           <div ref={hostRef} className="absolute inset-0" aria-hidden="true" />
+          <CrewMarkers ref={markerRef} lang={lang} data={crew} show={showCrew && !glFail} sel={crewSel} hl={crewHl} onSelect={pickCrew} />
+          {showCrew && !glFail && <CrewLegend lang={lang} data={crew} />}
           {glFail && (
             <p className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-ink-2">
               {L(lang, 'Ta przeglądarka nie obsługuje widoku 3D (WebGL). Opis drogi obok jest pełny.', 'This browser cannot show 3D (WebGL). The route description is complete.')}
@@ -253,6 +316,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
             ? L(lang, 'Przeciągnij, aby obrócić; kółko lub dwa palce, aby przybliżyć. Kliknij pomieszczenie, aby zobaczyć nazwę.', 'Drag to rotate; scroll or pinch to zoom. Click a room to see its name.')
             : L(lang, 'Kadłub jest półprzezroczysty, aby widać było drogę w środku.', 'The hull is see-through so the route inside is visible.')}
         </p>
+        {showCrew && <CrewList lang={lang} data={crew} sel={crewSel} onSelect={pickCrew} onHl={setCrewHl} />}
       </div>
 
       <aside className="panel flex min-w-0 flex-col gap-3 p-4">
@@ -270,6 +334,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
               </p>
               <p className="text-xs text-ink-2">{tr(lang, MUSTER[r.muster].where)}</p>
             </div>
+            <EvacCrew lang={lang} data={crew} zone={evZone} routeZones={routeZones} />
             {r.detour && r.blocked && (
               <p className="rounded-card border border-danger px-3 py-2 text-sm font-semibold text-danger">
                 {L(lang, `Objazd: ${STAIRS[r.blocked].name.pl} zablokowane.`, `Detour: ${STAIRS[r.blocked].name.en} blocked.`)}
@@ -302,6 +367,11 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
           </>
         ) : (
           <>
+            {showCrew && crewSel && (
+              <div id={crewSelId}>
+                <CrewDetail lang={lang} data={crew} sel={crewSel} onSelect={setCrewSel} onClose={() => setCrewSel(null)} />
+              </div>
+            )}
             <div>
               <h3 className="tech-title text-xl">{L(lang, 'Strefy statku', 'Ship zones')}</h3>
               <p className="text-xs text-ink-2">{L(lang, 'Wybierz strefę, aby ją podświetlić na modelu.', 'Pick a zone to highlight it on the model.')}</p>
@@ -327,6 +397,7 @@ export default function ShipPanel({ lang, mode, zone, blocked, onZone }: ShipPan
               })}
             </ul>
             <p className="sr-only" aria-live="polite">{picked ? roomName(lang, picked) : ''}</p>
+            <p className="sr-only" aria-live="polite">{crewSelLabel}</p>
           </>
         )}
         <p className="mt-auto border-t border-line pt-2 text-xs text-ink-2">{disclaimer}</p>
