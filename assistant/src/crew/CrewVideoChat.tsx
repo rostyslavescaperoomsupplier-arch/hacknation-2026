@@ -16,7 +16,7 @@ type Person = { id: string; name: string; terminal?: string; place?: string; bus
 type Incoming = Person & { media: Media };
 type Phase = 'offline' | 'connecting' | 'ready' | 'dialing' | 'incoming' | 'negotiating' | 'active';
 type Wire =
-  | { type: 'welcome'; id: string; room: string; peers: Person[] }
+  | { type: 'welcome'; id: string; room: string; peers: Person[]; iceServers?: RTCIceServer[]; iceTransportPolicy?: RTCIceTransportPolicy }
   | { type: 'peer:joined'; peer: Person }
   | { type: 'peer:left'; id: string }
   | { type: 'peer:status'; id: string; busy: boolean }
@@ -123,13 +123,16 @@ const EN: Strings = {
   signalling: 'Call signalling error.',
 };
 
-function rtcServers(): RTCIceServer[] {
-  // For an offline ship LAN, start with host ICE candidates only. On separated
-  // networks add a self-hosted TURN server via the optional env setting.
+/** ICE servers when the signalling server sends none (older server): build-time VITE_CREW_ICE_SERVERS, else public
+ *  STUN. Normally the server delivers them in `welcome` (server/crew-video.ts iceConfig, env CREW_ICE_SERVERS /
+ *  CREW_TURN_*). With NO ICE server only host candidates exist and two devices on different networks never connect. */
+function fallbackIceServers(): RTCIceServer[] {
   const value = import.meta.env.VITE_CREW_ICE_SERVERS as string | undefined;
-  if (!value) return [];
-  try { const parsed: unknown = JSON.parse(value); return Array.isArray(parsed) ? parsed as RTCIceServer[] : []; }
-  catch { return []; }
+  if (value) {
+    try { const parsed: unknown = JSON.parse(value); if (Array.isArray(parsed)) return parsed as RTCIceServer[]; }
+    catch { /* invalid JSON: public STUN below */ }
+  }
+  return [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 }
 
 function loadIdentity(): Identity | null {
@@ -193,6 +196,7 @@ export default function CrewVideoChat({ lang, onOpen }: { lang: Lang; onOpen?: (
   const partnerRef = useRef<Person | null>(null);
   const mediaRef = useRef<Media>('video');
   const selfIdRef = useRef('');
+  const rtcConfigRef = useRef<RTCConfiguration>({ iceServers: fallbackIceServers() });
   const desiredRef = useRef(false);
   const loginRef = useRef<{ name: string; room: string; terminal?: string; place?: string }>({ name: '', room: '' });
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -319,7 +323,7 @@ export default function CrewVideoChat({ lang, onOpen }: { lang: Lang; onOpen?: (
     setHasLocalVideo(stream.getVideoTracks().length > 0);
     setCamEnabled(stream.getVideoTracks().some(track => track.enabled));
     setMicEnabled(stream.getAudioTracks().some(track => track.enabled));
-    const pc = new RTCPeerConnection({ iceServers: rtcServers() });
+    const pc = new RTCPeerConnection(rtcConfigRef.current);
     pcRef.current = pc;
     remoteStreamRef.current = new MediaStream();
     for (const track of stream.getTracks()) pc.addTrack(track, stream);
@@ -400,6 +404,9 @@ export default function CrewVideoChat({ lang, onOpen }: { lang: Lang; onOpen?: (
     switch (event.type) {
       case 'welcome':
         selfIdRef.current = event.id;
+        if (Array.isArray(event.iceServers)) rtcConfigRef.current = {
+          iceServers: event.iceServers, ...(event.iceTransportPolicy === 'relay' ? { iceTransportPolicy: 'relay' as const } : {}),
+        };
         setPeers(event.peers);
         retryCountRef.current = 0;
         setWarning('');

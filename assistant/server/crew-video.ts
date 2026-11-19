@@ -4,7 +4,7 @@
  * Deliberately keeps NO media, recordings, passwords, or chat history on the server.
  *
  * Protocol (JSON text frames, unknown fields are ignored, unknown types answered with an error):
- *   -> join { name, room, terminal?, place? }       <- welcome { id, room, peers: PeerInfo[] }
+ *   -> join { name, room, terminal?, place? }       <- welcome { id, room, peers: PeerInfo[], iceServers, iceTransportPolicy? }
  *   <- peer:joined { peer } | peer:left { id } | peer:status { id, busy }
  *   -> call:invite { to, media?: 'audio'|'video' }  <- call:invite { from, name, terminal?, place?, media }
  *   -> call:accept | call:reject | call:cancel | call:hangup { to }
@@ -18,7 +18,7 @@
  * HACKATHON DEMO ONLY. A room code is not authentication. For use on an actual
  * vessel add crew authentication, TLS, authorization, monitoring, and audit controls.
  */
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Socket } from 'node:net';
 import { clientIp, originAllowed } from './guard.ts';
@@ -81,6 +81,50 @@ const PLACE_RE = /^[A-Z0-9][A-Z0-9_-]{0,11}$/;
 const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
 const peers = new Map<string, Peer>();
 const rooms = new Map<string, Room>();
+
+type IceServer = { urls: string | string[]; username?: string; credential?: string };
+/** Public STUN used when CREW_ICE_SERVERS is not set: lets browsers behind ordinary NAT find their public address.
+ *  Without any ICE server only "host" candidates exist and a call connects only inside one LAN (no client isolation). */
+const DEFAULT_ICE: IceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+const ICE_URL_RE = /^(stun|stuns|turn|turns):[^\s]{1,200}$/;
+
+/**
+ * ICE servers sent to every terminal in `welcome` (no rebuild needed to change them). Env:
+ *   CREW_ICE_SERVERS   JSON array of RTCIceServer (static STUN/TURN, e.g. a hosted TURN with fixed credentials);
+ *                      unset = public STUN (DEFAULT_ICE), "[]" = none (offline ship LAN).
+ *   CREW_TURN_URLS     comma-separated turn:/turns: URLs of an own coturn with `use-auth-secret`, together with
+ *   CREW_TURN_SECRET   its static-auth-secret: short-lived credentials (TURN REST API) are minted per join.
+ *   CREW_TURN_TTL_SEC  lifetime of those credentials (default 12 h).
+ *   CREW_ICE_POLICY    "relay" forces TURN only (testing the TURN server).
+ * Exported for tests.
+ */
+export function iceConfig(env: Record<string, string | undefined> = process.env, now = Date.now()):
+  { iceServers: IceServer[]; iceTransportPolicy?: 'relay' } {
+  let servers: IceServer[] = DEFAULT_ICE;
+  const raw = env.CREW_ICE_SERVERS?.trim();
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) servers = parsed.flatMap((s): IceServer[] => {
+        if (!s || typeof s !== 'object') return [];
+        const { urls, username, credential } = s as Record<string, unknown>;
+        const list = (Array.isArray(urls) ? urls : [urls]).filter((u): u is string => typeof u === 'string' && ICE_URL_RE.test(u));
+        if (!list.length) return [];
+        return [{ urls: list, ...(typeof username === 'string' ? { username } : {}), ...(typeof credential === 'string' ? { credential } : {}) }];
+      });
+      else console.warn('[crew-video] CREW_ICE_SERVERS is not a JSON array, using public STUN');
+    } catch { console.warn('[crew-video] CREW_ICE_SERVERS is not valid JSON, using public STUN'); }
+  }
+  const turnUrls = (env.CREW_TURN_URLS ?? '').split(',').map(u => u.trim()).filter(u => /^turns?:/.test(u) && ICE_URL_RE.test(u));
+  const secret = env.CREW_TURN_SECRET?.trim();
+  if (turnUrls.length && secret) {
+    const ttl = Number(env.CREW_TURN_TTL_SEC) > 0 ? Math.floor(Number(env.CREW_TURN_TTL_SEC)) : 12 * 3600;
+    const username = `${Math.floor(now / 1000) + ttl}:crew`;
+    const credential = createHmac('sha1', secret).update(username).digest('base64');
+    servers = [...servers, { urls: turnUrls, username, credential }];
+  }
+  return env.CREW_ICE_POLICY?.trim() === 'relay' ? { iceServers: servers, iceTransportPolicy: 'relay' } : { iceServers: servers };
+}
 
 /** Write one unfragmented server-to-browser WebSocket frame. */
 function frame(opcode: number, data: Buffer): Buffer {
@@ -212,7 +256,7 @@ function handle(peer: Peer, data: Payload) {
     if (!entry) rooms.set(room, entry = { members: new Set(), creatorIp: peer.ip, lastActive: Date.now() });
     entry.members.add(peer);
     entry.lastActive = Date.now();
-    send(peer, { type: 'welcome', id: peer.id, room, peers: existing });
+    send(peer, { type: 'welcome', id: peer.id, room, peers: existing, ...iceConfig() });
     broadcast(room, { type: 'peer:joined', peer: info(peer) }, peer.id);
     return;
   }

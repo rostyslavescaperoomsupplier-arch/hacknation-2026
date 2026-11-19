@@ -49,15 +49,17 @@ node --experimental-strip-types tests/crew-video.test.mjs
 
 ## Интернет / работа на корабле
 
-По умолчанию `RTCPeerConnection` создаётся с `iceServers: []`, то есть **никакой внешний STUN/TURN не вызывается**. Это позволяет работать внутри одной доступной LAN, если устройства могут связаться напрямую и сеть не блокирует P2P-трафик. Связь между разными VLAN, NAT или изолированными Wi-Fi-клиентами может потребовать собственного TURN-сервера.
+ICE-серверы терминал получает от сервера сигнализации в сообщении `welcome` (`assistant/server/crew-video.ts`, `iceConfig`), пересборка фронтенда не нужна. Переменные окружения сервера (`assistant/.env` локально, `/etc/jantar-assistant.env` на VPS):
 
-При наличии TURN добавь в `assistant/.env` перед запуском Vite, например:
+| Переменная | Что делает |
+|---|---|
+| (не задано) | публичный STUN (Google, Cloudflare): работает за обычным домашним NAT |
+| `CREW_ICE_SERVERS=[]` | без STUN/TURN, только host-кандидаты: офлайн-LAN корабля |
+| `CREW_ICE_SERVERS=[{"urls":"turn:...","username":"...","credential":"..."}]` | статический список (например, хостинговый TURN с постоянными учётками) |
+| `CREW_TURN_URLS=turn:host:3478?transport=udp,turn:host:3478?transport=tcp` + `CREW_TURN_SECRET=...` | свой coturn с `use-auth-secret`: временные учётки (TURN REST API) на каждый вход, `CREW_TURN_TTL_SEC` (12 ч) |
+| `CREW_ICE_POLICY=relay` | только через TURN (проверка TURN-сервера) |
 
-```dotenv
-VITE_CREW_ICE_SERVERS=[{"urls":"turn:turn.ship.local:3478","username":"demo","credential":"replace-me"}]
-```
-
-Это только пример конфигурации: TURN нужно отдельно установить, защитить и настроить. Не размещай секретные TURN-учётные данные в долгосрочной production-конфигурации фронтенда.
+Без ICE-серверов есть только host-кандидаты, и звонок между устройствами в разных сетях (телефон на LTE, другой Wi-Fi, Wi-Fi с изоляцией клиентов) звонит, но не соединяется: висит «Łączenie z…», через 25 с «Nie udało się nawiązać połączenia». STUN помогает за обычным NAT; за CGNAT / симметричным NAT нужен TURN.
 
 ## Ограничения демо
 
